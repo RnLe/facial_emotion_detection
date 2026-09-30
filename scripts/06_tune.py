@@ -88,6 +88,10 @@ for model in args.models:
     )
     if args.worker == 0 and len(study.trials) == 0:
         study.enqueue_trial(defaults(model))
+    if args.workers == 1:  # a trial still "running" was cut off by a crash: count it as failed
+        for t in study.trials:
+            if t.state == optuna.trial.TrialState.RUNNING:
+                study._storage.set_trial_state_values(t._trial_id, optuna.trial.TrialState.FAIL)
 
     def objective(trial):
         cfg = {**suggest(trial, model), "stage": "tune", "iteration": trial.number}

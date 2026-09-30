@@ -154,3 +154,12 @@ ResNet-18, VGG and DenseNet lead at 84 to 85% test accuracy and cannot be told a
 ConvNeXt trail by 6 to 13 points and underfit: their training accuracy at the end is only
 74 to 81%. The ImageNet-pretrained ResNet-18 gains nothing over training from scratch.
 Disgust and fear are the weakest classes for every model.
+
+## 2026-09-30: a crash during tuning
+
+At 22:08 the tuning process died with a segmentation fault in DenseNet's second trial: the
+first trial with a different batch size, which makes the compiler rebuild a model whose
+layers are recomputed in the backward pass (checkpointing). ResNet-18 and VGG had finished
+their 30 trials each. DenseNet now runs without compilation (it only gained 14% from it),
+each model's tuning runs in its own process (`scripts/run_all.sh`), a trial cut off by a
+crash counts as failed, and the final runs skip models that are not tuned yet.

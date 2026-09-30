@@ -23,6 +23,17 @@ def best_config(model, seed):
     return config(model, **best, seed=seed, stage="final", iteration=seed)
 
 
+def tuned(model):
+    try:
+        storage = optuna.storages.JournalStorage(optuna.storages.journal.JournalFileBackend(str(RUNS / "optuna" / f"{model}.log")))
+        study = optuna.load_study(study_name=model, storage=storage)
+    except (KeyError, FileNotFoundError):
+        return False
+    return len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]) >= 30
+
+
+args.models = [m for m in args.models if tuned(m)]
+print("final runs for", args.models, flush=True)
 jobs = [(m, s) for s in range(args.seeds) for m in args.models]
 add_to_plan([{**config(m, seed=s), "stage": "final", "iteration": s} for m, s in jobs])
 torch.cuda.set_per_process_memory_fraction(0.85 / args.workers)

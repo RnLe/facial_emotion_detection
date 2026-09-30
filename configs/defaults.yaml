@@ -16,7 +16,9 @@ common:
 cnn:      {lr: 1.0e-3, weight_decay: 0.05, dropout: 0.5}
 vgg:      {lr: 1.0e-3, weight_decay: 0.05, dropout: 0.5}
 resnet:   {lr: 1.0e-3, weight_decay: 0.05, dropout: 0.0}
-densenet: {lr: 1.0e-3, weight_decay: 0.05, dropout: 0.0}
+# DenseNet runs uncompiled: compiling its checkpointed layers crashed (segfault) when a
+# trial changed the batch size; compiling only saved it 14%.
+densenet: {lr: 1.0e-3, weight_decay: 0.05, dropout: 0.0, compile: false}
 
 # Transformers and ConvNeXt: DeiT / CCT style, lower learning rate, stochastic depth.
 vit:      {lr: 5.0e-4, weight_decay: 0.05, dropout: 0.0, drop_path: 0.1}

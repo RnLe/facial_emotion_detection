@@ -92,7 +92,7 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
     g = torch.Generator(device="cuda").manual_seed(cfg["seed"])
     model_args = {k: cfg[k] for k in ("dropout", "drop_path") if k in cfg}
     model = build(cfg["model"], **model_args).cuda().to(memory_format=torch.channels_last)
-    fast = torch.compile(model) if compile else model
+    fast = torch.compile(model) if cfg.get("compile", compile) else model
 
     train_idx = data.idx["train"]
     steps = len(train_idx) // cfg["batch_size"]
