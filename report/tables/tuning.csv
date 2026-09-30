@@ -1,0 +1,2 @@
+"Model","Trials","Default","Best","Gain","Random: median","Random: IQR","Within 1 pt of best","Most important"
+"ResNet-18","5","76.7","77.0","+0.3","76.4","1.7","80%","-"

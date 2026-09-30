@@ -84,6 +84,13 @@ def export(name):
             kind, text = "Output", "7 emotions"
         else:
             kind, text = label(node, modules)
+            params_read = [a.target for a in node.all_input_nodes if a.op == "get_attr"]
+            if any("pos" in t for t in params_read):
+                kind, text = "add", "Add positions"
+            elif any("cls" in t for t in params_read):
+                kind, text = "Token", "Class token"
+            elif node.op == "call_function" and getattr(node.target, "__name__", "") == "getitem" and isinstance(node.args[1], tuple) and node.args[1][-1] == 0:
+                text = "Take class token"
         target = node.target if node.op == "call_module" else node.meta.get("nn_module_stack") and list(node.meta["nn_module_stack"].values())[-1][0]
         params = sum(p.numel() for p in modules[node.target].parameters(recurse=False)) if node.op == "call_module" else 0
         if node.op == "call_module":
@@ -92,7 +99,7 @@ def export(name):
         nodes.append({"id": len(nodes), "kind": kind, "label": text, "shape": shape, "params": params,
                       "group": group_of(target if isinstance(target, str) else None, modules)})
         for arg in node.all_input_nodes:
-            if arg in ids:
+            if arg in ids and text != "Class token":  # the class token only borrows the batch size
                 edges.append([ids[arg], ids[node]])
 
     # Drop bookkeeping nodes that carry no tensor (reading a shape), joining their neighbours.
