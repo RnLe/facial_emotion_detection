@@ -1,0 +1,70 @@
+{
+  "fer_total": 35887,
+  "fer_dropped_votes": 4271,
+  "fer_label_changed_by_ferplus": 10266,
+  "fer_dropped_flat": 0,
+  "duplicate_groups": 1852,
+  "images_in_duplicate_groups": 4424,
+  "duplicate_groups_across_splits": 731,
+  "duplicate_groups_label_conflict": 87,
+  "dropped_duplicates": 2659,
+  "kept": 44296,
+  "counts": {
+    "train_fer": {
+      "angry": 1797,
+      "disgust": 81,
+      "fear": 378,
+      "happy": 7043,
+      "neutral": 8580,
+      "sad": 2714,
+      "surprise": 2330
+    },
+    "train_raf": {
+      "angry": 625,
+      "disgust": 637,
+      "fear": 250,
+      "happy": 4254,
+      "neutral": 2248,
+      "sad": 1749,
+      "surprise": 1141
+    },
+    "val_fer": {
+      "angry": 272,
+      "disgust": 19,
+      "fear": 50,
+      "happy": 861,
+      "neutral": 1185,
+      "sad": 332,
+      "surprise": 376
+    },
+    "val_raf": {
+      "angry": 70,
+      "disgust": 72,
+      "fear": 28,
+      "happy": 475,
+      "neutral": 251,
+      "sad": 196,
+      "surprise": 129
+    },
+    "test_fer": {
+      "angry": 264,
+      "disgust": 15,
+      "fear": 73,
+      "happy": 887,
+      "neutral": 1097,
+      "sad": 371,
+      "surprise": 391
+    },
+    "test_raf": {
+      "angry": 161,
+      "disgust": 160,
+      "fear": 74,
+      "happy": 1182,
+      "neutral": 676,
+      "sad": 476,
+      "surprise": 326
+    }
+  },
+  "train_mean": 0.5023925319309426,
+  "train_std": 0.23993447236566073
+}

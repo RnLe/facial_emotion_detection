@@ -1,0 +1,38 @@
+[project]
+name = "fer"
+version = "0.1.0"
+description = "Facial emotion recognition: seven architectures on one cleaned dataset, and how much each gains from tuning"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch>=2.11",
+    "torchvision>=0.26",
+    "optuna>=4.5",
+    "numpy",
+    "pandas",
+    "pillow",
+    "opencv-python-headless",
+    "matplotlib",
+    "scikit-learn",
+    "pyyaml",
+    "tqdm",
+    "kaggle",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.setuptools]
+packages = ["fer", "fer.models"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

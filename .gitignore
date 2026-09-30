@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+/data/
+/runs/
+*.ckpt
+*.pt
+report/*.pdf
+# sample sheets for looking at the raw data; they contain RAF-DB faces
+results/inspect/
+fer.egg-info/
