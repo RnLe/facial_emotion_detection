@@ -1,0 +1,27 @@
+# Educated defaults: the settings each model starts from before any tuning.
+# Shared by all: AdamW, linear warmup then cosine decay, label smoothing 0.1,
+# full augmentation, square-root class weights (the rarest class, disgust, is
+# about 2% of the training images). Model selection by validation macro-F1.
+common:
+  epochs: 60
+  batch_size: 256
+  warmup_epochs: 5
+  label_smoothing: 0.1
+  augment: 1.0
+  class_weights: sqrt
+  seed: 0
+
+# CNNs: learning rate 1e-3 and weight decay 0.05 are the usual AdamW starting
+# points. Dropout only where the reference has a dense head.
+cnn:      {lr: 1.0e-3, weight_decay: 0.05, dropout: 0.5}
+vgg:      {lr: 1.0e-3, weight_decay: 0.05, dropout: 0.5}
+resnet:   {lr: 1.0e-3, weight_decay: 0.05, dropout: 0.0}
+densenet: {lr: 1.0e-3, weight_decay: 0.05, dropout: 0.0}
+
+# Transformers and ConvNeXt: DeiT / CCT style, lower learning rate, stochastic depth.
+vit:      {lr: 5.0e-4, weight_decay: 0.05, dropout: 0.0, drop_path: 0.1}
+cct:      {lr: 5.0e-4, weight_decay: 0.05, dropout: 0.0, drop_path: 0.1}
+convnext: {lr: 1.0e-3, weight_decay: 0.05, dropout: 0.0, drop_path: 0.1}
+
+# Reference: fine-tuning pretrained weights wants a smaller learning rate.
+resnet_pretrained: {lr: 3.0e-4, weight_decay: 0.05, dropout: 0.0}

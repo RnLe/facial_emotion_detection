@@ -81,3 +81,43 @@ tuning can choose it per model. Augmenting the whole training set takes about 60
 GPU, so it costs nothing per epoch. Augmentation is online (new variants every epoch)
 rather than a fixed enlarged copy of the data; mirroring online has the same effect as
 storing mirrored copies, without the memory.
+
+## 2026-09-30: models
+
+Seven architectures plus a pretrained reference, each a step on from the one before
+(`fer/models/`, hypotheses in `docs/hypotheses.md`, written before training):
+simple CNN, VGG-style, ResNet-18, DenseNet-BC-100, ViT-Lite-7/4, ConvNeXt-Atto,
+CCT-7/3x2, and ResNet-18 with ImageNet weights. All take a 48x48 grayscale face.
+
+| Model | Parameters | GMACs per image |
+|---|---|---|
+| Simple CNN | 1.27 M | 0.02 |
+| VGG-style | 7.05 M | 0.47 |
+| ResNet-18 | 11.2 M | 1.25 |
+| DenseNet-BC | 0.77 M | 0.16 (stride-2 stem) |
+| ViT | 3.73 M | 0.53 |
+| ConvNeXt | 3.38 M | 0.10 |
+| CCT | 3.88 M | 0.62 |
+| ResNet-18, ImageNet | 11.2 M | 0.33 (96x96 input) |
+
+The architectures stay fixed; tuning changes only training settings. The question is how
+much a given architecture depends on its settings, not which size wins.
+
+## 2026-09-30: training setup
+
+- The whole dataset lives on the GPU (100 MB as uint8). Each epoch, the shuffled training set
+  is augmented in one call; batches are slices of it. No data loader, no CPU work per step.
+- bfloat16 autocast, channels-last memory, fused AdamW, cuDNN autotuning.
+- One optimiser family for all (AdamW, warmup then cosine decay), so that differences come
+  from the architectures and not from the optimiser.
+- Label smoothing 0.1 and square-root class weights by default (disgust and fear are about
+  2% of the training images each).
+- Model selection by validation macro-F1 after every epoch. Accuracy would reward ignoring
+  the rare classes.
+
+DenseNet at full 48x48 resolution took 57 s per epoch, six times ResNet-18, although it
+needs half the multiply-adds. Profiling showed why: most of its time goes into copying the
+growing stack of features and re-normalising it in every layer; the convolutions take 7%.
+Memory-efficient checkpointing and other memory layouts did not help. DenseNet now starts
+with one stride-2 convolution (blocks at 24, 12, 6 px): 12.5 s per epoch. Changed before any
+real training run.

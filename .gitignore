@@ -10,3 +10,9 @@ report/*.pdf
 # sample sheets for looking at the raw data; they contain RAF-DB faces
 results/inspect/
 fer.egg-info/
+
+# local training dashboard (for following along, not part of the study)
+dashboard/
+
+# scratchpad notes: raw material for the report
+notes/

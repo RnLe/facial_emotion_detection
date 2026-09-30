@@ -15,7 +15,8 @@ Rules, each chosen after looking at the sheets in results/inspect/:
 - Splits: FER2013 Training / PublicTest / PrivateTest are train / val / test.
   RAF-DB's train set gives 10% (stratified) to validation; its test set stays.
 
-Writes data/processed/dataset.npz and results/data/summary.json.
+Writes data/processed/dataset.npz, data/processed/dropped.npz (every dropped image and
+why) and results/data/summary.json.
 """
 import json
 from pathlib import Path
@@ -55,6 +56,14 @@ log["fer_label_changed_by_ferplus"] = int((fer_label[keep] != fer["fer_label"][k
 std = fer["images"].reshape(len(top), -1).std(1)
 log["fer_dropped_flat"] = int((keep & (std < 3)).sum())
 keep &= std >= 3
+
+reason = np.full(len(top) + len(raf["label"]), "", dtype=object)
+reason[:len(top)][agree < MIN_VOTES] = "low agreement"
+reason[:len(top)][top == 7] = "contempt"
+reason[:len(top)][top == 8] = "unknown"
+reason[:len(top)][top == 9] = "not a face"
+reason[:len(top)][fer["ferplus_removed"]] = "removed by FER+"
+reason[:len(top)][(reason[:len(top)] == "") & (std < 3)] = "blank"
 
 fer_split = np.array([{"Training": 0, "PublicTest": 1, "PrivateTest": 2}[u] for u in fer["usage"]])
 raf_split = np.where(raf["usage"] == "train", 0, 2)
@@ -97,12 +106,22 @@ for g in dup_groups:
     alive[g] = False
     if len(set(label[g])) == 1:
         alive[max(g, key=lambda i: (split[i], -i))] = True  # keep the test copy if there is one
+        reason[[i for i in g if not alive[i]]] = "duplicate"
+    else:
+        reason[g] = "duplicate, labels disagree"
 log["dropped_duplicates"] = log["images_in_duplicate_groups"] - (log["duplicate_groups"] - log["duplicate_groups_label_conflict"])
 
 sel = np.where(alive)[0]
 out = dict(images=images[sel], label=label[sel], split=split[sel], source=source[sel], agreement=agreement[sel], original_index=sel)
 Path("data/processed").mkdir(parents=True, exist_ok=True)
 np.savez_compressed("data/processed/dataset.npz", **out)
+gone = np.where(~alive)[0]
+np.savez_compressed(
+    "data/processed/dropped.npz",
+    images=images[gone], label=label[gone], split=split[gone], source=source[gone],
+    agreement=agreement[gone], reason=reason[gone].astype(str), original_index=gone,
+)
+log["dropped_by_reason"] = {r: int((reason[gone] == r).sum()) for r in sorted(set(reason[gone]))}
 
 counts = {}
 for s_name, s in SPLITS.items():

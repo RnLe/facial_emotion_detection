@@ -8,6 +8,15 @@
   "duplicate_groups_across_splits": 731,
   "duplicate_groups_label_conflict": 87,
   "dropped_duplicates": 2659,
+  "dropped_by_reason": {
+    "contempt": 216,
+    "duplicate": 2399,
+    "duplicate, labels disagree": 260,
+    "low agreement": 3656,
+    "not a face": 4,
+    "removed by FER+": 173,
+    "unknown": 222
+  },
   "kept": 44296,
   "counts": {
     "train_fer": {

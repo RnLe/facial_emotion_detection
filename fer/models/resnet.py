@@ -1,0 +1,62 @@
+"""ResNet-18 for small images, and the ImageNet-pretrained ResNet-18 used as a reference."""
+import torch
+import torch.nn.functional as F
+from torch import nn
+
+
+class BasicBlock(nn.Module):
+    """Two 3x3 convs whose output is added to the block's input (the skip connection)."""
+
+    def __init__(self, i, o, stride):
+        super().__init__()
+        self.conv1 = nn.Conv2d(i, o, 3, stride, 1, bias=False)
+        self.bn1 = nn.BatchNorm2d(o)
+        self.conv2 = nn.Conv2d(o, o, 3, 1, 1, bias=False)
+        self.bn2 = nn.BatchNorm2d(o)
+        self.skip = nn.Identity()
+        if stride != 1 or i != o:
+            self.skip = nn.Sequential(nn.Conv2d(i, o, 1, stride, bias=False), nn.BatchNorm2d(o))
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        return F.relu(out + self.skip(x))
+
+
+class ResNet18(nn.Module):
+    """3x3 stem without max pooling (the CIFAR variant), so the 48x48 input is not shrunk
+    right away. Stages at 48, 24, 12 and 6 pixels."""
+
+    def __init__(self, classes=7, dropout=0.0, widths=(64, 128, 256, 512)):
+        super().__init__()
+        self.stem = nn.Sequential(nn.Conv2d(1, widths[0], 3, 1, 1, bias=False), nn.BatchNorm2d(widths[0]), nn.ReLU(inplace=True))
+        stages, c = [], widths[0]
+        for k, w in enumerate(widths):
+            stride = 1 if k == 0 else 2
+            stages.append(nn.Sequential(BasicBlock(c, w, stride), BasicBlock(w, w, 1)))
+            c = w
+        self.stages = nn.Sequential(*stages)
+        self.head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Dropout(dropout), nn.Linear(c, classes))
+
+    def forward(self, x):
+        return self.head(self.stages(self.stem(x)))
+
+
+class PretrainedResNet18(nn.Module):
+    """torchvision's ResNet-18 with ImageNet weights. The grayscale face is scaled to 96x96
+    and copied into three channels, since the weights expect colour photos of that scale."""
+
+    MEAN, STD = 0.502, 0.240  # our normalisation, undone before ImageNet's is applied
+
+    def __init__(self, classes=7, dropout=0.0):
+        super().__init__()
+        from torchvision.models import ResNet18_Weights, resnet18
+
+        self.net = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
+        self.net.fc = nn.Sequential(nn.Dropout(dropout), nn.Linear(512, classes))
+        self.register_buffer("im_mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer("im_std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
+    def forward(self, x):
+        x = F.interpolate(x * self.STD + self.MEAN, size=96, mode="bilinear", align_corners=False)
+        return self.net((x.expand(-1, 3, -1, -1) - self.im_mean) / self.im_std)

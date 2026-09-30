@@ -1,0 +1,81 @@
+"""Hyperparameter tuning with Optuna, the same budget for every model.
+
+The search ranges are educated guesses centred on each model's defaults: the learning rate
+from a tenth to ten times the default, the other settings over the range people use in
+practice. The default settings go in as the first trial, so every study contains its
+baseline. TPE picks the settings (10 random trials first), successive halving stops weak
+trials early (at 6 and 18 of 60 epochs). Objective: the best validation macro-F1 of a run.
+The test set is never touched here.
+
+Workers can share one study: run the script twice with different --worker numbers.
+"""
+import argparse
+
+import optuna
+import torch
+
+from fer.models import MODELS
+from fer.runs import RUNS, add_to_plan, record_path
+from fer.train import GPUData, config, run
+
+p = argparse.ArgumentParser()
+p.add_argument("--models", nargs="+", default=[m for m in MODELS if m != "resnet_pretrained"])
+p.add_argument("--trials", type=int, default=40)
+p.add_argument("--worker", type=int, default=0)
+p.add_argument("--workers", type=int, default=1)
+args = p.parse_args()
+
+
+def suggest(trial, model):
+    d = config(model)
+    cfg = {
+        **d,
+        "lr": trial.suggest_float("lr", d["lr"] / 10, d["lr"] * 10, log=True),
+        "weight_decay": trial.suggest_float("weight_decay", 5e-4, 0.5, log=True),
+        "batch_size": trial.suggest_categorical("batch_size", [128, 256, 512]),
+        "label_smoothing": trial.suggest_float("label_smoothing", 0.0, 0.2),
+        "augment": trial.suggest_float("augment", 0.0, 1.5),
+        "class_weights": trial.suggest_categorical("class_weights", ["none", "sqrt", "inverse"]),
+        "warmup_epochs": trial.suggest_int("warmup_epochs", 0, 10),
+    }
+    if "drop_path" in d:
+        cfg["drop_path"] = trial.suggest_float("drop_path", 0.0, 0.3)
+    else:
+        cfg["dropout"] = trial.suggest_float("dropout", 0.0, 0.6)
+    return cfg
+
+
+def defaults(model):
+    d = config(model)
+    out = {k: d[k] for k in ("lr", "weight_decay", "batch_size", "label_smoothing", "augment", "class_weights", "warmup_epochs")}
+    out["drop_path" if "drop_path" in d else "dropout"] = d.get("drop_path", d.get("dropout"))
+    return out
+
+
+torch.cuda.set_per_process_memory_fraction(0.85 / args.workers)
+data = GPUData()
+(RUNS / "optuna").mkdir(parents=True, exist_ok=True)
+for model in args.models:
+    add_to_plan([{**config(model), "stage": "tune", "iteration": k} for k in range(args.trials)])
+    storage = optuna.storages.JournalStorage(optuna.storages.journal.JournalFileBackend(str(RUNS / "optuna" / f"{model}.log")))
+    study = optuna.create_study(
+        study_name=model,
+        storage=storage,
+        direction="maximize",
+        load_if_exists=True,
+        sampler=optuna.samplers.TPESampler(n_startup_trials=10, multivariate=True, seed=args.worker),
+        pruner=optuna.pruners.SuccessiveHalvingPruner(min_resource=6, reduction_factor=3),
+    )
+    if args.worker == 0 and len(study.trials) == 0:
+        study.enqueue_trial(defaults(model))
+
+    def objective(trial):
+        cfg = {**suggest(trial, model), "stage": "tune", "iteration": trial.number}
+        torch.cuda.empty_cache()
+        result, _ = run(cfg, data=data, trial=trial, log=None, record=record_path("tune", model, trial.number))
+        return result["best_val_macro_f1"]
+
+    left = args.trials - len([t for t in study.trials if t.state != optuna.trial.TrialState.FAIL])
+    if left > 0:
+        study.optimize(objective, n_trials=max(1, left // args.workers + (args.worker < left % args.workers)))
+    print(f"{model}: best val F1 {study.best_value:.3f} with {study.best_params}", flush=True)
