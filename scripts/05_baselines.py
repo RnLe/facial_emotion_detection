@@ -1,4 +1,4 @@
-"""Baselines: every model with its educated defaults (configs/defaults.yaml), three seeds,
+"""Baselines: every model with its educated defaults (configs/defaults.yaml), two seeds,
 60 epochs, scored once on the test set with the weights of its best validation epoch.
 
 Several workers can share the GPU: `--worker 0 --workers 2` and `--worker 1 --workers 2`
@@ -15,7 +15,7 @@ from fer.train import GPUData, config, run
 p = argparse.ArgumentParser()
 p.add_argument("--worker", type=int, default=0)
 p.add_argument("--workers", type=int, default=1)
-p.add_argument("--seeds", type=int, default=3)
+p.add_argument("--seeds", type=int, default=2)
 args = p.parse_args()
 
 # seed first, then model: after the first round every model has one finished run

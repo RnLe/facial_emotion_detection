@@ -121,3 +121,36 @@ growing stack of features and re-normalising it in every layer; the convolutions
 Memory-efficient checkpointing and other memory layouts did not help. DenseNet now starts
 with one stride-2 convolution (blocks at 24, 12, 6 px): 12.5 s per epoch. Changed before any
 real training run.
+
+## 2026-09-30: tuning design
+
+First plan: 40 trials of 60 epochs with successive halving (stop weak trials after 6 and
+18 epochs). Changed before the tuning started: with pruning, most trials end after 6
+epochs, and spread or importance computed from 6-epoch runs says little about 60-epoch
+training. Now: 30 trials per model, each 25 epochs to the end, no pruning. The first 10
+trials are random (an unbiased sample of the search space), the rest TPE. The best
+settings are retrained for 60 epochs with three seeds. Cost: about 9 hours on the GPU.
+
+Two processes on one GPU were tried for the baselines and dropped: under WSL2 the driver
+switches between them, and together they got through about 20% less work than one
+process running the jobs in turn.
+
+## 2026-09-30: two baseline seeds
+
+To save time, the baselines use two seeds per model instead of three (decided while seed 1
+was running; seed 2 was never started). Final runs keep three seeds.
+
+## 2026-09-30: tuning order
+
+Tuning starts with the strongest models, ordered by mean baseline validation accuracy
+(not test): ResNet-18, VGG, DenseNet, simple CNN, CCT, ConvNeXt, ViT. The order changes
+nothing about the budget each model gets.
+
+## 2026-09-30: baseline results
+
+Two seeds per model, 60 epochs, defaults (report section 5, `results/baselines.json`).
+ResNet-18, VGG and DenseNet lead at 84 to 85% test accuracy and cannot be told apart
+(the test set alone has about ±0.9 points of sampling error). The attention models and
+ConvNeXt trail by 6 to 13 points and underfit: their training accuracy at the end is only
+74 to 81%. The ImageNet-pretrained ResNet-18 gains nothing over training from scratch.
+Disgust and fear are the weakest classes for every model.

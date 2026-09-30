@@ -173,18 +173,54 @@ and compiled. Two findings along the way:
 
 = Baselines <sec-baselines>
 
-_To be written when the baseline runs are complete._
+Every model was trained with its default settings for 60 epochs, with two seeds. @tab-baselines
+gives the test scores of the epoch with the best validation macro-F1.
+
+#let baselines = csv("tables/baselines.csv")
+#figure(
+  text(size: 8pt, table(
+    columns: baselines.first().len(),
+    align: (left,) + (right,) * (baselines.first().len() - 1),
+    table.header(..baselines.first().map(h => [*#h*])),
+    ..baselines.slice(1).flatten(),
+  )),
+  caption: [Baselines on the test set (6,153 faces), mean ± spread over two seeds, in %.
+    ECE: expected calibration error (lower is better). Seconds per epoch on one RTX 4070 Ti.],
+) <tab-baselines>
+
+- *Three CNNs with batch norm lead, and cannot be told apart.* ResNet-18 (85.0%), VGG and
+  DenseNet (84.3% each) are within one point. The test set's own sampling error at this
+  accuracy is about ±0.9 points (95%), so none of them clearly wins.
+- *Everything built on attention or LayerNorm trails with default settings.* CCT (78.0%)
+  and ConvNeXt (76.9%) end level with the simple CNN (78.2%); the plain ViT is last (71.8%).
+- *They underfit.* At the end of training the CNNs with batch norm reach 91 to 95% on the
+  (augmented) training images; the attention models and ConvNeXt reach only 74 to 81%,
+  barely above their test scores. Their defaults, not their capacity, hold them back. This
+  is where tuning should help most.
+- *Pretraining buys nothing here.* The ImageNet ResNet-18 scores 84.4%, level with the same
+  network trained from scratch. It fits the training images best (97.5%) and generalises no
+  better; its disgust recall is the lowest of the strong models (48%).
+- *Rare classes are the hard part for every model* (@fig-recall): disgust and fear reach
+  48 to 63% recall, happy and surprise 80 to 92%.
+- *Parameters and speed do not follow each other.* DenseNet matches VGG with 9 times fewer
+  parameters and ResNet-18 with 15 times fewer, but is the slowest per epoch.
+
+#figure(image("figures/baseline_curves.svg", width: 100%), caption: [Validation curves of the baselines: mean over two seeds, band from minimum to maximum.]) <fig-curves>
+
+#figure(image("figures/baseline_recall.svg", width: 92%), caption: [Recall per class on the test set (%), mean over two seeds.]) <fig-recall>
 
 = Tuning and sensitivity <sec-tuning>
 
-Each model gets 40 Optuna @akiba2019 trials with the TPE sampler @bergstra2011 (10 random
-trials first) and successive halving @jamieson2016, which stops weak trials after 6 and 18
-of 60 epochs. The search ranges are educated guesses centred on each model's defaults: the
-learning rate from a tenth to ten times the default, weight decay from 0.0005 to 0.5,
-batch size 128, 256 or 512, label smoothing up to 0.2, augmentation strength up to 1.5,
-three class weightings, up to 10 warmup epochs, and dropout or stochastic depth. The
-default settings are the first trial of every study. The best settings are retrained with
-three seeds and scored once on the test set.
+Each model gets 30 Optuna @akiba2019 trials with the TPE sampler @bergstra2011. The first 10
+trials are random: they sample the search space without bias and give the spread across
+settings. Every trial runs the same shortened schedule of 25 epochs to the end, without
+pruning, so all trials can be compared. The search ranges are educated guesses centred on
+each model's defaults: the learning rate from a tenth to ten times the default, weight
+decay from 0.0005 to 0.5, batch size 128, 256 or 512, label smoothing up to 0.2,
+augmentation strength up to 1.5, three class weightings, up to 10 warmup epochs, and
+dropout or stochastic depth. The default settings are the first trial of every study. The
+best settings are retrained for the full 60 epochs with three seeds and scored once on the
+test set.
 
 _Results to be written when the tuning is complete._
 
