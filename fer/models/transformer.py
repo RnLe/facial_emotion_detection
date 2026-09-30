@@ -71,7 +71,7 @@ class ViT(nn.Module):
 
     def forward(self, x):
         x = self.patch(x).flatten(2).transpose(1, 2)
-        x = torch.cat([self.cls.expand(len(x), -1, -1), x], 1) + self.pos
+        x = torch.cat([self.cls.expand(x.shape[0], -1, -1), x], 1) + self.pos
         return self.head(self.encoder(x)[:, 0])
 
 

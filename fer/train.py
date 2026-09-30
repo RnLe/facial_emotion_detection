@@ -163,6 +163,9 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
         src = data.source[data.idx["test"]]
         for name, k in [("test_fer", 0), ("test_raf", 1)]:
             result[name] = scores(prob[src == k], true[src == k])
+        result["test_pred"] = prob.argmax(1).tolist()  # for bootstrap intervals later
+        if record:
+            torch.save(model.state_dict(), Path(record).with_suffix(".pt"))
     result["params"] = sum(p.numel() for p in model.parameters())
     result["peak_memory_gb"] = torch.cuda.max_memory_allocated() / 1e9
     save({**state, **result, "status": "done", "finished": time.time()}, record)

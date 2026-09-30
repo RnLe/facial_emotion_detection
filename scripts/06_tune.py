@@ -23,11 +23,12 @@ p.add_argument("--models", nargs="+", default=[m for m in MODELS if m != "resnet
 p.add_argument("--trials", type=int, default=40)
 p.add_argument("--worker", type=int, default=0)
 p.add_argument("--workers", type=int, default=1)
+p.add_argument("--epochs", type=int, help="shorter runs, for testing the script")
 args = p.parse_args()
 
 
 def suggest(trial, model):
-    d = config(model)
+    d = config(model, **({"epochs": args.epochs} if args.epochs else {}))
     cfg = {
         **d,
         "lr": trial.suggest_float("lr", d["lr"] / 10, d["lr"] * 10, log=True),
@@ -75,7 +76,8 @@ for model in args.models:
         result, _ = run(cfg, data=data, trial=trial, log=None, record=record_path("tune", model, trial.number))
         return result["best_val_macro_f1"]
 
-    left = args.trials - len([t for t in study.trials if t.state != optuna.trial.TrialState.FAIL])
+    ran = (optuna.trial.TrialState.COMPLETE, optuna.trial.TrialState.PRUNED, optuna.trial.TrialState.RUNNING)
+    left = args.trials - len([t for t in study.trials if t.state in ran])
     if left > 0:
         study.optimize(objective, n_trials=max(1, left // args.workers + (args.worker < left % args.workers)))
     print(f"{model}: best val F1 {study.best_value:.3f} with {study.best_params}", flush=True)

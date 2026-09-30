@@ -1,8 +1,9 @@
 """Where runs are recorded, and the list of planned runs the dashboard shows."""
 import json
+import os
 from pathlib import Path
 
-RUNS = Path("runs")
+RUNS = Path(os.environ.get("FER_RUNS", "runs"))  # another folder for quick test runs
 
 
 def record_path(stage, model, iteration):
