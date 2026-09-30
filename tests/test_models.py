@@ -19,3 +19,18 @@ def test_shape_and_size(name):
     params = sum(p.numel() for p in model.parameters()) / 1e6
     lo, hi = SIZES[name]
     assert lo <= params <= hi, f"{name}: {params:.2f}M parameters"
+
+
+# The corners of the stage 2 shape ranges (06_tune.py): every combination still maps a face
+# to seven scores.
+CORNERS = {"resnet": ((0.25, 1.5), (1, 3), (3, 4)), "vgg": ((0.25, 1.5), (1, 3), (3, 4)), "densenet": ((0.5, 2.0), (6, 20), (2, 3))}
+
+
+@pytest.mark.parametrize("name", list(CORNERS))
+def test_shapes(name):
+    widths, depths, stages = CORNERS[name]
+    for w in widths:
+        for d in depths:
+            for s in stages:
+                model = build(name, width=w, depth=d, stages=s).eval()
+                assert model(torch.randn(2, 1, 48, 48)).shape == (2, 7), (w, d, s)

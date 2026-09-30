@@ -60,3 +60,22 @@ Each model gets the same tuning budget, with search ranges centred on its defaul
 - **H7, what matters.** Learning rate is the most important setting for every model.
   Augmentation strength comes second for the transformers and matters little for the
   simple CNN.
+
+## Guesses about the network's shape (stage 2)
+
+Written on 2026-10-01, before any stage 2 trial. Stage 1 results for ResNet-18 and VGG
+were known by then (tuning gains of 2 to 3 points of validation macro-F1).
+
+Stage 2 tunes ResNet-18, VGG and DenseNet again, now with their width, depth and number of
+stages in the search, starting from their stage 1 best.
+
+- **H8, shape against settings.** For each of the three, the shape settings together
+  matter less than the training settings (lower combined importance).
+  *Why:* the three models reach the same accuracy at very different sizes (0.8 to 11 M
+  parameters), so size is not what limits them.
+- **H9, gain.** The best shape improves on the stage 1 best by less than one point of
+  validation macro-F1, and after retraining the difference on the test set is within noise.
+- **H10, smaller networks.** For each family, a network with at most a quarter of the
+  default's parameters comes within one point of the best.
+  *Why:* the default sizes come from CIFAR and ImageNet configurations; 34,000 faces of
+  48x48 pixels should not need 11 M parameters.

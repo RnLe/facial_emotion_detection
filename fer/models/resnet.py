@@ -3,6 +3,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from .cnn import channels
+
 
 class BasicBlock(nn.Module):
     """Two 3x3 convs whose output is added to the block's input (the skip connection)."""
@@ -25,15 +27,19 @@ class BasicBlock(nn.Module):
 
 class ResNet18(nn.Module):
     """3x3 stem without max pooling (the CIFAR variant), so the 48x48 input is not shrunk
-    right away. Stages at 48, 24, 12 and 6 pixels."""
+    right away. Stages at 48, 24, 12 and 6 pixels.
 
-    def __init__(self, classes=7, dropout=0.0, widths=(64, 128, 256, 512)):
+    For the second tuning stage: width scales the channels, depth is the number of blocks
+    per stage (2 is ResNet-18, 1 ResNet-10, 3 ResNet-26), stages the number of stages."""
+
+    def __init__(self, classes=7, dropout=0.0, width=1.0, depth=2, stages=4):
         super().__init__()
+        widths = [channels(64 * 2**k * width) for k in range(stages)]
         self.stem = nn.Sequential(nn.Conv2d(1, widths[0], 3, 1, 1, bias=False), nn.BatchNorm2d(widths[0]), nn.ReLU(inplace=True))
         stages, c = [], widths[0]
         for k, w in enumerate(widths):
             stride = 1 if k == 0 else 2
-            stages.append(nn.Sequential(BasicBlock(c, w, stride), BasicBlock(w, w, 1)))
+            stages.append(nn.Sequential(BasicBlock(c, w, stride), *[BasicBlock(w, w, 1) for _ in range(depth - 1)]))
             c = w
         self.stages = nn.Sequential(*stages)
         self.head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Dropout(dropout), nn.Linear(c, classes))

@@ -158,7 +158,10 @@ def studies():
         if not path.exists():
             continue
         storage = optuna.storages.JournalStorage(optuna.storages.journal.JournalFileBackend(str(path)))
-        study = optuna.load_study(study_name=m, storage=storage)
+        try:
+            study = optuna.load_study(study_name=m, storage=storage)
+        except KeyError:  # an empty journal: the study was never started
+            continue
         done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         if len(done) >= 3:
             out[m] = (study, done)

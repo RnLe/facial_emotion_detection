@@ -80,7 +80,8 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
     """Train one model with the settings in cfg; return the history and the scores.
 
     cfg keys: model, epochs, batch_size, lr, weight_decay, warmup_epochs, label_smoothing,
-    augment, class_weights, seed, and the model's own settings (dropout, drop_path).
+    augment, class_weights, seed, and the model's own settings (dropout, drop_path, and
+    width, depth, stages for the shape stage).
     With an Optuna trial, the validation macro-F1 is reported each epoch for pruning.
     With a record path, the run's state is written there after every epoch (for following
     the training live).
@@ -90,7 +91,7 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
     save(state, record)
     torch.manual_seed(cfg["seed"])
     g = torch.Generator(device="cuda").manual_seed(cfg["seed"])
-    model_args = {k: cfg[k] for k in ("dropout", "drop_path") if k in cfg}
+    model_args = {k: cfg[k] for k in ("dropout", "drop_path", "width", "depth", "stages") if k in cfg}
     model = build(cfg["model"], **model_args).cuda().to(memory_format=torch.channels_last)
     fast = torch.compile(model) if cfg.get("compile", compile) else model
 

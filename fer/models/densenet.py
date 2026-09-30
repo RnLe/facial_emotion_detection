@@ -50,9 +50,14 @@ def transition(c, o):
 
 
 class DenseNetBC(nn.Module):
-    def __init__(self, classes=7, dropout=0.0, depth=100, growth=12, compression=0.5, stem_stride=2):
+    """Defaults: depth 100 (16 bottleneck layers in each of 3 blocks), growth rate 12.
+
+    For the second tuning stage: width scales the growth rate (12 new channels per layer),
+    depth is the number of layers per block, stages the number of dense blocks."""
+
+    def __init__(self, classes=7, dropout=0.0, width=1.0, depth=16, stages=3, compression=0.5, stem_stride=2):
         super().__init__()
-        n = (depth - 4) // 6  # bottleneck layers per block: 16 for depth 100
+        n, growth = depth, round(12 * width)
         c = 2 * growth
         # The CIFAR version keeps full resolution (32 px) in its first block. At 48 px that
         # block alone made an epoch six times slower than ResNet-18's: DenseNet's time goes
@@ -60,10 +65,10 @@ class DenseNetBC(nn.Module):
         # convolutions. One stride-2 stem conv (the ImageNet version even downsamples 4x)
         # puts the blocks at 24, 12 and 6 px.
         layers = [nn.Conv2d(1, c, 3, stride=stem_stride, padding=1, bias=False)]
-        for block in range(3):
+        for block in range(stages):
             layers.append(DenseBlock(n, c, growth))
             c += n * growth
-            if block < 2:
+            if block < stages - 1:
                 o = int(c * compression)
                 layers.append(transition(c, o))
                 c = o

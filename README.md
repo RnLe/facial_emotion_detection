@@ -16,9 +16,14 @@ uv run python scripts/02_inspect.py        # sample sheets for looking at the ra
 uv run python scripts/03_build_dataset.py  # cleaning and unification -> data/processed/dataset.npz
 uv run python scripts/04_augment_preview.py # what augmentation does, and how fast
 uv run pytest
-uv run python scripts/05_baselines.py      # every model with its defaults, 3 seeds
+uv run python scripts/05_baselines.py      # every model with its defaults, 2 seeds
 uv run python scripts/06_tune.py           # Optuna, the same budget per model
 uv run python scripts/07_final.py          # best settings, 3 seeds, test set
+uv run python scripts/06_tune.py --stage shape   # stage 2: the network's shape joins the search
+uv run python scripts/07_final.py --stage shape
+uv run python scripts/08_figures.py        # figures and tables for the report
 ```
+
+`scripts/run_all.sh` and `scripts/run_shape.sh` run the long steps one model per process.
 
 The datasets are not part of this repository. RAF-DB is for non-commercial research only.

@@ -163,3 +163,26 @@ layers are recomputed in the backward pass (checkpointing). ResNet-18 and VGG ha
 their 30 trials each. DenseNet now runs without compilation (it only gained 14% from it),
 each model's tuning runs in its own process (`scripts/run_all.sh`), a trial cut off by a
 crash counts as failed, and the final runs skip models that are not tuned yet.
+
+## 2026-10-01: stage 2, the network's shape
+
+Stage 1 keeps every architecture fixed, which answers the main question (how much a given
+network depends on its training settings). It leaves open how much the shape itself matters.
+Stage 2 adds it, for the three strongest baselines (ResNet-18, VGG, DenseNet), as a separate
+set of studies so that stage 1 stays comparable across all seven models.
+
+- Three shape settings, the same for each family: width (a multiplier on the channels;
+  for DenseNet on the growth rate), depth (blocks per stage, convs per stage, layers per
+  block) and the number of stages (how far the image is downsampled). Ranges in
+  `scripts/06_tune.py`; from 0.08 to 39 M parameters for ResNet, 0.25 to 23 M for VGG,
+  0.03 to 4.4 M for DenseNet. ResNet and VGG are large already, so their width range goes
+  mostly down; DenseNet's goes both ways.
+- Starts where stage 1 ended: batch size and class weights fixed at the stage 1 best
+  (128 and square-root weights for all three), the other training settings searched over
+  the same ranges as before. Trial 0 is the stage 1 best with the default shape.
+- 40 trials of 25 epochs per model, the first 12 random. Nine settings instead of eight,
+  and shape settings interact (with each other, and with the learning rate).
+- Final runs: 60 epochs, three seeds, for the best trial and for the smallest network
+  within one point of it (both picked on validation), to see if a small network holds up.
+
+Estimated cost: about 10 hours, run after the stage 1 final runs (`scripts/run_shape.sh`).
