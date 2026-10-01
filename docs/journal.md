@@ -127,8 +127,8 @@ real training run.
 First plan: 40 trials of 60 epochs with successive halving (stop weak trials after 6 and
 18 epochs). Changed before the tuning started: with pruning, most trials end after 6
 epochs, and spread or importance computed from 6-epoch runs says little about 60-epoch
-training. Now: 30 trials per model, each 25 epochs to the end, no pruning. The first 10
-trials are random (an unbiased sample of the search space), the rest TPE. The best
+training. Now: 30 trials per model, each 25 epochs to the end, no pruning. Trial 0 is the
+defaults, trials 1 to 9 are random (an unbiased sample of the search space), the rest TPE. The best
 settings are retrained for 60 epochs with three seeds. Cost: about 9 hours on the GPU.
 
 Two processes on one GPU were tried for the baselines and dropped: under WSL2 the driver
@@ -180,9 +180,36 @@ set of studies so that stage 1 stays comparable across all seven models.
 - Starts where stage 1 ended: batch size and class weights fixed at the stage 1 best
   (128 and square-root weights for all three), the other training settings searched over
   the same ranges as before. Trial 0 is the stage 1 best with the default shape.
-- 40 trials of 25 epochs per model, the first 12 random. Nine settings instead of eight,
+- 40 trials of 25 epochs per model: the start, 11 random, then TPE. Nine settings instead of eight,
   and shape settings interact (with each other, and with the learning rate).
 - Final runs: 60 epochs, three seeds, for the best trial and for the smallest network
   within one point of it (both picked on validation), to see if a small network holds up.
 
 Estimated cost: about 10 hours, run after the stage 1 final runs (`scripts/run_shape.sh`).
+
+## 2026-10-01: stage 1 tuning results
+
+All seven studies finished at 05:43 (report section 6, `report/tables/tuning.csv`).
+
+- Two groups: the CNNs with batch norm gain 2 to 3 points (validation macro-F1, 25-epoch
+  trials) and 30 to 43% of their trials come within a point of the best. The simple CNN,
+  ViT, ConvNeXt and CCT gain 4 to 9 points, with 7 to 10% of trials that close.
+- All studies share one sampler seed, so the 9 random trials are the same settings on
+  every model: a paired comparison. Nine times the default learning rate, no warmup and
+  inverse class weights collapse VGG, ViT and ConvNeXt; ResNet-18 and DenseNet keep training.
+- Warmup is the most important setting for four models, the learning rate for ViT and CCT,
+  class weighting for ResNet-18. Augmentation, weight decay and batch size matter little.
+- With 60 epochs, the defaults beat the best 25-epoch trial for ViT, CCT and DenseNet.
+  The trials measure sensitivity under a short budget; the final runs (60 epochs) measure
+  the gain from tuning.
+- Analysis fix: Optuna's 10 startup trials include the enqueued default, so the random
+  phase is trials 1 to 9, not 1 to 10.
+
+## 2026-10-01: stage 1 final runs
+
+Best settings per model, 60 epochs, three seeds, test set (report section 6.1). Tuning
+gains 6.6 points of accuracy for ViT, 3.0 to 3.6 for CCT, ConvNeXt and the simple CNN, and
+0.1 to 0.4 for VGG, ResNet-18 and DenseNet (within the test set's noise). The gap between
+the best and the worst model shrinks from 13 to 7 points; ResNet-18, VGG and DenseNet stay
+on top, level with each other. The baselines ran before test predictions were stored, so
+default-against-tuned is a difference of means, not a paired test.

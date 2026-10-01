@@ -3,8 +3,9 @@
 The search ranges are educated guesses centred on each model's defaults: the learning rate
 from a tenth to ten times the default, the other settings over the range people use in
 practice. The default settings go in as the first trial, so every study contains its
-baseline. TPE picks the settings, after 10 random trials that sample the space without
-bias (used for the spread across settings).
+baseline. TPE picks the settings, after 9 random trials that sample the space without bias
+(used for the spread across settings). Optuna counts the default trial among its 10
+startup trials.
 
 Every trial runs the same shortened schedule (25 epochs) to the end, without pruning: the
 question is how sensitive a model is to its settings, and that needs trials that can be
@@ -16,8 +17,9 @@ shape in the search too: width, depth and number of stages (SHAPES). It starts w
 1 ended. Batch size and class weights stay at the stage 1 best (stage 1 settled them), the
 other training settings are searched over the same ranges as before, and the first trial
 is the stage 1 best with the default shape, so the gain over it is what the shape adds.
-40 trials, the first 12 random: the shape settings interact with each other and with the
-learning rate (a wider network usually wants a smaller one), so TPE needs a few more.
+40 trials, the start and 11 random ones first: the shape settings interact with each
+other and with the learning rate (a wider network usually wants a smaller one), so TPE
+needs a few more.
 
 Workers can share one study: run the script twice with different --worker numbers.
 """
