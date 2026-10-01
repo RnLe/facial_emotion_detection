@@ -266,3 +266,25 @@ including zero. VGG's 1.4 points on validation did not carry over. DenseNet's sm
 near-best network (0.52 M) loses 1.2 points of accuracy and 2.5 of macro-F1, a clear
 difference. Conclusion: for these three, the published sizes were already right for this
 data; stage 2 (about 11 GPU hours) changed no conclusion of stage 1.
+
+## 2026-10-01: long runs, design
+
+Question: do the three strongest models converge, overfit, or generalise late (grokking)
+when trained far longer than 60 epochs? `scripts/09_long.py`, measures in `fer/measures.py`.
+
+- Three runs per model: *tuned* (stage 1 best settings, default shape), *larger* (stage 2
+  best shape and settings), *memorize* (stage 1 settings without augmentation, label
+  smoothing and dropout, weight decay set to lr x weight decay = 1e-3 as in the original
+  grokking runs). The memorize run is the setting in which grokking was found: the
+  training set can be learned by heart, and weight decay keeps pulling afterwards.
+- Constant learning rate after the warmup instead of cosine decay, so a run is not tied to
+  a fixed length and can be extended. To compare with the 60-epoch runs, a 10-epoch
+  cooldown (learning rate falling linearly to zero) branches off at the end of each block
+  of epochs (warmup-stable-decay) and is scored on validation and test.
+- Logged every epoch: accuracy and loss on 4,316 fixed training faces without
+  augmentation (memorisation), validation scores, the train-validation gap, the spectral
+  entropy of the penultimate features (Khanh et al. 2026), the absolute weight entropy
+  (Golechha 2024), the spectral entropy of the weight matrices (closeness to low rank),
+  weight norm, neural collapse (Papyan et al. 2020), and prediction entropy.
+- No model selection: the curves show every epoch, the cooldown scores the last one.
+- Checkpoints every 5 epochs; `--epochs N` resumes and extends. First block: 100 epochs.

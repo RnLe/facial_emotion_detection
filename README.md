@@ -22,6 +22,7 @@ uv run python scripts/07_final.py          # best settings, 3 seeds, test set
 uv run python scripts/06_tune.py --stage shape   # stage 2: the network's shape joins the search
 uv run python scripts/07_final.py --stage shape
 uv run python scripts/08_figures.py        # figures and tables for the report
+uv run python scripts/09_long.py --epochs 100   # long runs; a larger --epochs resumes and extends them
 ```
 
 `scripts/run_all.sh` and `scripts/run_shape.sh` run the long steps one model per process.

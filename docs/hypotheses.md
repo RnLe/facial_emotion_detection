@@ -79,3 +79,21 @@ stages in the search, starting from their stage 1 best.
   default's parameters comes within one point of the best.
   *Why:* the default sizes come from CIFAR and ImageNet configurations; 34,000 faces of
   48x48 pixels should not need 11 M parameters.
+
+## Guesses about long training (long runs)
+
+Written on 2026-10-01, before any long run. Three runs each for ResNet-18, VGG and
+DenseNet (tuned settings; the larger stage 2 shape; a "memorize" run without augmentation,
+label smoothing or dropout and with stronger weight decay), 100 epochs with a constant
+learning rate, then a 10-epoch cooldown.
+
+- **H11, convergence.** Validation accuracy levels off within 100 epochs while accuracy on
+  the clean training faces keeps rising. After the cooldown, the tuned and larger runs
+  land within a point of the 60-epoch final runs: training longer does not help by itself.
+- **H12, grokking.** The memorize runs learn the training faces almost completely (above
+  95%) within 100 epochs, and their validation accuracy falls behind and does not recover
+  within 100 epochs. The representation entropy and the weight entropy decline steadily,
+  without the sudden drop that precedes grokking.
+- **H13, compressibility.** The spectral entropy of the weights falls during long
+  training, most in the memorize runs: the layers move towards low rank, which would make
+  them easier to compress.
