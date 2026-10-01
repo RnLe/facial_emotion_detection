@@ -288,3 +288,25 @@ when trained far longer than 60 epochs? `scripts/09_long.py`, measures in `fer/m
   weight norm, neural collapse (Papyan et al. 2020), and prediction entropy.
 - No model selection: the curves show every epoch, the cooldown scores the last one.
 - Checkpoints every 5 epochs; `--epochs N` resumes and extends. First block: 100 epochs.
+
+## 2026-10-01: long runs, 100 epochs
+
+All nine runs and their cooldowns done (single seed each). After the cooldown every run
+lands within about a point of its 60-epoch counterpart on the test set: the tuned runs
+0.2 to 0.6 points below, the larger runs between 0.1 below and 0.6 above. Training longer
+does not help by itself. The memorize runs end 2 to 4.7 points below the tuned runs and
+do not grok within 100 epochs. At the constant learning rate they fit only 86 to 94% of
+the training faces; the step noise keeps them from memorising, and only the cooldown
+takes them to 100%. DenseNet was still improving at epoch 100 in all three runs and fits
+only 84 to 87% of the training faces at the constant learning rate. In every run the
+weights drift towards low rank, most in the memorize runs.
+
+## 2026-10-01: grok run, design
+
+To test grokking where it can actually happen, a run needs a fully memorised training
+set first. The VGG memorize run after its cooldown has that (100% of the training faces,
+81.5% validation). The grok run continues from there for 1,000 epochs with the same
+settings at a tenth of the learning rate (4.3e-4; the cooldown fitted every training face
+from 8.7e-4 down) and unchanged weight decay. VGG because it trains fastest (3.1 s per
+epoch without augmentation, about an hour for 1,000 epochs). If validation accuracy does
+rise, a control run without weight decay is next, to tell grokking from plain fine-tuning.

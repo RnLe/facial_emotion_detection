@@ -97,3 +97,15 @@ learning rate, then a 10-epoch cooldown.
 - **H13, compressibility.** The spectral entropy of the weights falls during long
   training, most in the memorize runs: the layers move towards low rank, which would make
   them easier to compress.
+
+## Guess about grokking (grok run)
+
+Written on 2026-10-01, after the 100-epoch long runs, before the grok run. VGG's memorize
+run, after its cooldown (every training face learned, 81.5% validation accuracy), trained
+on for 1,000 epochs at a tenth of the learning rate with the same weight decay.
+
+- **H14, no grokking.** Training accuracy stays at 100% and validation accuracy rises by
+  less than a point. The weight norm falls under weight decay without changing what the
+  network predicts. *Why:* grokking was found where memorising comes with near-chance test
+  accuracy on small training sets. Here the network already generalises (81.5%) by the
+  time it has memorised 34,000 faces, so there is little left to discover late.

@@ -8,6 +8,13 @@ Three runs per model:
             training set can be learned by heart, and with weight decay set to give
             lr x weight decay = 1e-3 per step, as in the original grokking runs
             (Power et al. 2022: AdamW, lr 1e-3, weight decay 1)
+  grok      continues the memorize run after its first cooldown, where it has learned
+            every training face (100%) and scores 81.5% on validation (VGG). Same
+            settings at a tenth of the learning rate, low enough to stay memorised (the
+            cooldown fitted every training face from lr 8.7e-4 down), with weight decay
+            unchanged: lr x weight decay = 1e-4 per step. Grokking would show as
+            validation accuracy rising long after training accuracy reached 100%.
+            Run it with --variants grok and --epochs past 110 (it starts at epoch 110).
 
 The learning rate warms up and then stays constant, so no run is tied to a fixed length:
 --epochs 300 continues a run from where it stopped. To see what a run would reach if it
@@ -52,8 +59,10 @@ def settings(model, variant):
     s = best_params(model)
     if variant == "larger":
         s = {**s, **best_params(f"{model}_shape")}
-    if variant == "memorize":
+    if variant in ("memorize", "grok"):
         s = {**s, "augment": 0.0, "label_smoothing": 0.0, "dropout": 0.0, "weight_decay": 1e-3 / s["lr"]}
+    if variant == "grok":
+        s["lr"] /= 10
     return config(model, **s, epochs=args.epochs, stage="long", iteration=variant, schedule="constant")
 
 
@@ -174,10 +183,15 @@ for model, variant in runs:
     done = torch.load(checkpoint, weights_only=False)["epoch"] if checkpoint.exists() else 0
     steps = len(data.idx["train"]) // cfg["batch_size"]
     warmup, lr = steps * cfg["warmup_epochs"], cfg["lr"]
+    start, schedule = checkpoint, lambda s: lr * min(1.0, (s + 1) / max(1, warmup))
+    if variant == "grok":  # branches off the memorize run's first cooldown, no warmup
+        start = checkpoint if checkpoint.exists() else record_path("cooldown", model, "memorize_e100").with_suffix(".ckpt")
+        schedule = lambda s: lr
+        done = done or 110
     if done < args.epochs:
         print(f"{model} {variant}: epochs {done} to {args.epochs}", flush=True)
         torch.cuda.empty_cache()
-        train(cfg, data, probe, record, checkpoint, args.epochs, lambda s: lr * min(1.0, (s + 1) / max(1, warmup)), start=checkpoint)
+        train(cfg, data, probe, record, checkpoint, args.epochs, schedule, start=start)
         milestone = record.with_name(f"{variant}_e{args.epochs}.ckpt")
         milestone.write_bytes(checkpoint.read_bytes())  # kept for the cooldown and later work
 
