@@ -347,7 +347,7 @@ def shape_figures():
     found = studies("_shape")
     if not found:
         return
-    rows = [["Model", "Trials", "Start", "Best", "Gain", "Random: IQR", "Within 1 pt of best", "Shape share", "Best shape", "Smallest within 1 pt"]]
+    rows = [["Model", "Start", "Best", "Gain", "Random IQR", "Within 1 pt", "Shape share", "Best shape", "Smallest within 1 pt"]]
     importance, everything = {}, []
     fig, ax = plt.subplots(figsize=(6.4, 3.0))
     for m in [m for m in MODELS if m in found]:
@@ -366,7 +366,7 @@ def shape_figures():
         share = sum(imp.get(k, 0) for k in ("width", "depth", "stages"))
         q1, q3 = np.percentile(random_values, [25, 75]) if len(random_values) else (np.nan, np.nan)
         rows.append([
-            NAMES[m], str(len(done)), f"{start:.1f}", f"{values.max():.1f}", f"{values.max() - start:+.1f}",
+            NAMES[m], f"{start:.1f}", f"{values.max():.1f}", f"{values.max() - start:+.1f}",
             f"{q3 - q1:.1f}" if len(random_values) else "-", f"{100 * np.mean(values >= values.max() - 1):.0f}%",
             f"{100 * share:.0f}%" if imp else "-",
             f"width {best.params['width']:.2f}, depth {best.params['depth']}, {best.params['stages']} stages ({best.user_attrs['params'] / 1e6:.2f} M)",
@@ -412,8 +412,7 @@ def shape_final_figures():
                      f"{100 * mean(stage1[m], 'accuracy'):.1f}", f"{100 * mean(stage1[m], 'macro_f1'):.1f}", "", ""])
         summary[m] = {}
         for pick, found in picks.items():
-            if m not in found:
-                rows.append([NAMES[m], f"stage 2 {pick}", "same as best", "", "", "", ""])
+            if m not in found:  # no network smaller than the default within a point of the best
                 continue
             runs = found[m]
             p2 = np.array([r["test_pred"] for r in runs])

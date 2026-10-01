@@ -26,7 +26,10 @@
   ResNet-18, DenseNet) gain less than half a point and work with most settings. The simple
   CNN, ConvNeXt, CCT and ViT gain 3 to 7 points and work only in a narrow band of
   settings. Tuning halves the gap between the best and the worst architecture but does not
-  close it: ResNet-18, VGG and DenseNet stay on top at about 85% test accuracy.
+  close it: ResNet-18, VGG and DenseNet stay on top at about 85% test accuracy. A second
+  stage that also tunes the width, depth and number of stages of these three finds nothing
+  better than their published sizes: smaller networks lose accuracy, larger ones gain at
+  most 0.2 points.
 ]
 
 = Question
@@ -46,7 +49,8 @@ FER2013. A later review of its code found that neither of its two numbers measur
 performance: a swapped return value trained the DenseNet on the test folder and scored it
 there, the hyperparameter search therefore optimised a training loss, and the CNN was
 scored on unscaled images. This study starts from scratch, with one split, one data
-object, one evaluation path for every model, and a test set used once.
+object, one evaluation path for every model, and a test set that never steers a choice:
+every decision is made on the validation set.
 
 = Data <sec-data>
 
@@ -172,7 +176,10 @@ and compiled. Two findings along the way:
   was six times slower at full resolution. Its time goes into copying and re-normalising
   the growing stack of features in every layer; convolutions took 7% of it. A
   memory-efficient implementation @pleiss2017 saved memory, not time. DenseNet therefore
-  starts with one stride-2 convolution; its blocks work at 24, 12 and 6 pixels.
+  starts with one stride-2 convolution; its blocks work at 24, 12 and 6 pixels. At that
+  size the memory-efficient version is no longer needed; dropping it (during stage 2) made
+  DenseNet 1.6 to 1.9 times faster. It still runs at a few percent of the GPU's peak
+  arithmetic rate, against about 40% for ResNet-18.
 - *Compilation* speeds up the attention models by a third and ResNet and DenseNet by about
   a tenth; for the small CNNs it makes no difference.
 
@@ -323,6 +330,93 @@ on the test set (@tab-final, @fig-final).
 
 #figure(image("figures/final_gain.svg", width: 100%), caption: [Test scores with default settings (open) and tuned settings (filled), 60 epochs each.]) <fig-final>
 
+= The network's shape <sec-shape>
+
+Stage 1 keeps every architecture at its published size. Stage 2 asks what the shape adds,
+for the three strongest: ResNet-18, VGG and DenseNet. Each gets a new study of 40 trials
+in which three shape settings join the training settings:
+
+- *Width:* a multiplier on the channels of every layer, from 0.25 to 1.5 (for DenseNet on
+  the growth rate, from 0.5 to 2).
+- *Depth:* blocks per stage for ResNet-18 and convolutions per stage for VGG (1 to 3),
+  layers per dense block for DenseNet (6 to 20).
+- *Stages:* how often the image is halved, 3 or 4 (DenseNet: 2 or 3 dense blocks).
+
+This covers 0.08 to 39 M parameters for ResNet, 0.25 to 23 M for VGG and 0.03 to 4.4 M for
+DenseNet. Batch size and class weights stay at the stage 1 best (all three chose 128 and
+square-root weights); the other training settings are searched over the same ranges as
+before. The first trial is the stage 1 best with the default shape, so the gain over it is
+what the shape adds. Eleven random trials follow, then TPE. Guesses written before the
+first trial:
+
+8. *Shape against settings.* The shape settings together matter less than the training
+  settings. The three models reach the same accuracy at 0.8 to 11 M parameters, so size
+  does not seem to be what limits them.
+9. *Gain.* The best shape improves on the start by less than a point.
+10. *Smaller networks.* For each model, a network with at most a quarter of the default's
+  parameters comes within a point of the best.
+
+#let shape = csv("tables/shape.csv")
+#figure(
+  text(size: 7.5pt, table(
+    columns: shape.first().len(),
+    align: (left,) + (right,) * 6 + (left, left),
+    table.header(..shape.first().map(h => [*#h*])),
+    ..shape.slice(1).flatten(),
+  )),
+  caption: [Stage 2, 40 trials of 25 epochs per model, validation macro-F1 in %. Start: the
+    stage 1 best with the default shape. Shape share: the combined fANOVA importance of
+    width, depth and stages. Depth counts blocks (ResNet-18), convolutions (VGG) or layers
+    (DenseNet) per stage.],
+) <tab-shape>
+
+- *The published sizes are close to the best.* For ResNet-18 and DenseNet the best shape
+  beats the start by 0.4 and 0.3 points. That is within the noise: rerunning the stage 1
+  best settings gave 0.1 to 0.7 points less than the same settings had in stage 1. Only
+  VGG gains clearly, 1.4 points, with three convolutions per stage instead of two and 20%
+  more width; seven of its eight best trials use the deeper layout.
+- *Smaller costs accuracy, larger barely pays.* Every model's best trial is larger than
+  its default (1.2 to 2.1 times the parameters) and keeps its number of stages. Networks
+  with at most two thirds of the default's parameters score 1.1 to 1.9 points below the
+  best, at most a third 1.9 to 4.3 points, at most a tenth 3.8 to 8 points
+  (@fig-shape-size).
+- *How much the shape matters depends on the range.* The shape settings explain 71% of
+  the spread for ResNet-18 (width alone 57%), 44% for VGG and 26% for DenseNet
+  (@fig-shape-importance). For ResNet-18 that share comes from the narrow end of the range,
+  which reaches down to 0.08 M parameters, where scores fall by up to 12 points. Among the
+  good networks, the shape changes little.
+
+#figure(image("figures/shape_size.svg", width: 100%), caption: [Every stage 2 trial: validation macro-F1 against the number of parameters (log scale). Ring: the start, the stage 1 best with the default shape.]) <fig-shape-size>
+
+#figure(image("figures/shape_importance.svg", width: 100%), caption: [fANOVA importance in stage 2, in % of the variance explained across the 40 trials of a study.]) <fig-shape-importance>
+
+The best trial of each study, and DenseNet's smallest network within a point of the best
+(0.52 M parameters), were retrained for 60 epochs with three seeds. @tab-shape-final
+compares them with the stage 1 final runs on the same test images. For ResNet-18 and VGG
+no network smaller than the default came within a point of the best, so they have no
+second pick.
+
+#let shapefinal = csv("tables/shape_final.csv")
+#figure(
+  text(size: 8pt, table(
+    columns: shapefinal.first().len(),
+    align: (left, left) + (right,) * 5,
+    table.header(..shapefinal.first().map(h => [*#h*])),
+    ..shapefinal.slice(1).flatten(),
+  )),
+  caption: [Stage 2 against stage 1 on the test set, three seeds each, in %. The interval is a
+    paired bootstrap over the test images for the accuracy difference.],
+) <tab-shape-final>
+
+- *The shape adds nothing measurable.* All three best shapes score 0.2 points above their
+  stage 1 counterparts, with intervals that include zero. VGG's lead of 1.4 points on
+  validation was mostly the luck of picking the best of 40 noisy trials.
+- *The smaller DenseNet does not hold up.* With two thirds of the parameters it loses 1.2
+  points of accuracy and 2.5 of macro-F1 on the test set, a clear difference, although it
+  was within a point of the best on validation.
+- *For these three models the published sizes were already right.* Stage 2 cost about 11
+  GPU hours and changed no conclusion of stage 1.
+
 = Hypotheses revisited
 
 + *Ranking: mostly right.* ResNet-18, VGG and DenseNet lead within a point of each other,
@@ -349,6 +443,14 @@ on the test set (@tab-final, @fig-final).
 + *What matters: mostly wrong.* The learning rate is the most important setting only for
   ViT and CCT. Warmup leads for four models, class weighting for ResNet-18. Augmentation
   is never second; for the transformers it explains 3 to 5%.
+8. *Shape against settings: right for two of three.* The shape settings explain less than
+  the training settings for VGG (44%) and DenseNet (26%), but more for ResNet-18 (71%),
+  driven by the narrowest networks in its range.
+9. *Gain: right on the test set.* The best shapes gain 0.2 points of test accuracy, within
+  the noise. On validation, VGG's gain looked larger (1.4 points).
+10. *Smaller networks: wrong.* No network with at most a quarter of the default's
+  parameters came within a point of the best; the closest were 1.9 (ResNet-18) to 7.7
+  points (VGG) below it.
 
 = Limitations
 
@@ -369,7 +471,8 @@ on the test set (@tab-final, @fig-final).
 - *One task, one resolution.* 48×48 grayscale faces from two datasets with filtered labels
   (at least 5 of 10 FER+ annotators agree). Ambiguous faces were removed, so the test set
   is easier than faces in the wild.
-- *Fixed sizes.* The architectures keep their published sizes (0.8 to 11 M parameters).
-  Stage 2 varies the shape for the three strongest.
+- *Fixed sizes.* Stage 1 keeps the published sizes (0.8 to 11 M parameters); stage 2
+  varies the shape only for the three strongest. TPE chases accuracy, so mid-sized
+  networks were sampled less than large ones, and the size curve rests on few trials there.
 
 #bibliography("refs.bib", style: "ieee")

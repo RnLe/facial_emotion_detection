@@ -213,3 +213,56 @@ gains 6.6 points of accuracy for ViT, 3.0 to 3.6 for CCT, ConvNeXt and the simpl
 the best and the worst model shrinks from 13 to 7 points; ResNet-18, VGG and DenseNet stay
 on top, level with each other. The baselines ran before test predictions were stored, so
 default-against-tuned is a difference of means, not a paired test.
+
+## 2026-10-01: stage 2, ResNet-18 done
+
+The best shape (width 1.1, 13.7 M parameters) beats the start (stage 1 best, default
+shape) by 0.4 points of validation macro-F1. Re-running the start's exact settings gave
+78.3 against 78.7 in stage 1, so 0.4 points is also the run-to-run noise. Width explains
+most of the spread across trials (57%), because the range reaches down to tiny networks
+that score clearly lower; no network below 2.8 M parameters came within 1.5 points.
+
+Change to the final runs (before any stage 2 final run): the "smallest within one point"
+pick is retrained only if it is smaller than the default network. For ResNet-18 that
+pick is the default shape itself, which the stage 1 final runs already cover.
+
+## 2026-10-01: stage 2, VGG done
+
+Best shape: width 1.21 and three convolutions per stage instead of two (14.8 M
+parameters), 1.4 points of validation macro-F1 above the start. Seven of the eight best
+trials use three convolutions per stage. Shape settings explain 44% of the spread, the
+training settings 56%. The smallest network within a point of the best (8.6 M) is larger
+than the default (7.05 M), so it is not retrained.
+
+## 2026-10-01: DenseNet without recomputation
+
+DenseNet ran at about 2% of the GPU's tensor-core peak (ResNet-18: about 40%), at 120 W of
+285 W. A benchmark (stage 2 paused for five minutes) showed that recomputing its layers in
+the backward pass, needed when it ran at full resolution, took 40 to 50% of its time and
+saved almost no memory with the stride-2 stem (under 2.2 GB without it). Dropped from
+trial 25 of the DenseNet shape study on: 1.6 to 1.9 times faster per step, identical
+outputs and gradients. Compiling on top saves 0 to 20% per step but costs about 90 s per
+run, so DenseNet stays uncompiled. Trial 24 was cut off by the restart and counts as failed.
+Running the stage 2 final runs of ResNet-18 in parallel with the DenseNet trials was tried
+and dropped: alone each ran at 12.3 s per epoch, together at 25.3 and 35.0 s, so the pair
+got through 84% of the work of one process (as for the baselines: WSL2 switches between
+the processes instead of running them side by side).
+
+## 2026-10-01: stage 2, DenseNet done
+
+Best shape: growth rate 16 (width 1.31) and 17 layers per block, 1.49 M parameters, 0.3
+points above the start: within noise. The learning rate is the most important setting
+(33%); the shape settings together explain 26%. The smallest network within a point of the
+best has 0.52 M parameters (two thirds of the default) and is retrained in the final runs.
+Across all three models: every best trial is larger than the default and keeps its number
+of stages, and smaller networks lose steadily (at most a third of the parameters: 1.9 to
+4.3 points below the best).
+
+## 2026-10-01: stage 2 final runs
+
+Best shapes, 60 epochs, three seeds, against the stage 1 final runs on the same test
+images: +0.2 points of accuracy for each of ResNet-18, VGG and DenseNet, every interval
+including zero. VGG's 1.4 points on validation did not carry over. DenseNet's smallest
+near-best network (0.52 M) loses 1.2 points of accuracy and 2.5 of macro-F1, a clear
+difference. Conclusion: for these three, the published sizes were already right for this
+data; stage 2 (about 11 GPU hours) changed no conclusion of stage 1.

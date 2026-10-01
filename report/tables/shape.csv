@@ -1,0 +1,4 @@
+"Model","Start","Best","Gain","Random IQR","Within 1 pt","Shape share","Best shape","Smallest within 1 pt"
+"VGG-style","77.8","79.2","+1.4","5.6","12%","44%","width 1.21, depth 3, 4 stages (14.81 M)","78.2 with 8.61 M"
+"ResNet-18","78.3","78.7","+0.4","7.2","22%","71%","width 1.10, depth 2, 4 stages (13.69 M)","78.3 with 11.17 M"
+"DenseNet-BC","76.5","76.8","+0.3","7.1","18%","26%","width 1.31, depth 17, 3 stages (1.49 M)","76.0 with 0.52 M"

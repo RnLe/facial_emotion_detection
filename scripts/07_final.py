@@ -4,8 +4,10 @@ the test set. Together with the baselines this gives the gain from tuning per mo
 Stage 2 (--stage shape) does the same for the shape studies, with two picks per model: the
 best trial, and the smallest network within one point (validation macro-F1) of the best,
 to see whether a much smaller network holds up on the test set. Both are picked on the
-validation set."""
+validation set. The second pick is only retrained if it is smaller than the default
+network; otherwise the stage 1 final runs already cover it."""
 import argparse
+import time
 
 import optuna
 import torch
@@ -51,8 +53,8 @@ def picks(model):
         return [("final", study(model).best_params)]
     s, start = study(f"{model}_shape"), study(model).best_params  # batch size and class weights come from stage 1
     out = [("shape_final", {**start, **s.best_params})]
-    small = compact(s)
-    if small.number != s.best_trial.number:
+    small, default = compact(s), s.trials[0]  # trial 0: the stage 1 best with the default shape
+    if small.number != s.best_trial.number and small.user_attrs["params"] < default.user_attrs["params"]:
         out.append(("shape_compact", {**start, **small.params}))
     return out
 
@@ -67,7 +69,10 @@ data = GPUData()
 for k, (stage, model, seed, settings) in enumerate(jobs):
     if k % args.workers != args.worker or is_done(stage, model, seed):
         continue
+    record = record_path(stage, model, seed)
+    if record.exists() and time.time() - record.stat().st_mtime < 600:  # another process is on it
+        continue
     torch.cuda.empty_cache()
     cfg = config(model, **settings, seed=seed, stage=stage, iteration=seed)
-    result, _ = run(cfg, data=data, test=True, log=None, record=record_path(stage, model, seed))
+    result, _ = run(cfg, data=data, test=True, log=None, record=record)
     print(f"{stage} {model} seed {seed}: test acc {result['test']['accuracy']:.3f}, test F1 {result['test']['macro_f1']:.3f}", flush=True)

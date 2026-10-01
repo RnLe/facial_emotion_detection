@@ -1,13 +1,13 @@
 """DenseNet-BC for small images (depth 100, growth rate 12), as in Huang et al. 2017.
 
-Memory-efficient version (Pleiss et al. 2017, and torchvision's `memory_efficient`): the
-concatenation and the 1x1 bottleneck are recomputed in the backward pass instead of
-stored. The network is the same; without this, the concatenations at full 48x48
-resolution filled the whole 12 GB GPU and an epoch took ten times as long as ResNet-18's."""
+Until 2026-10-01 the layers were memory-efficient (Pleiss et al. 2017): the concatenation
+and the 1x1 bottleneck were recomputed in the backward pass instead of stored. That was
+needed at full 48x48 resolution, where the concatenations filled the 12 GB GPU. With the
+stride-2 stem the network needs under 2.2 GB without it, and the recomputing took 40 to 50%
+of the training time, so it was dropped. The network and its results are the same."""
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.utils.checkpoint import checkpoint
 
 
 class DenseLayer(nn.Module):
@@ -21,14 +21,8 @@ class DenseLayer(nn.Module):
         self.norm2 = nn.BatchNorm2d(4 * k)
         self.conv2 = nn.Conv2d(4 * k, k, 3, padding=1, bias=False)
 
-    def bottleneck(self, *features):
-        return self.conv1(F.relu(self.norm1(torch.cat(features, 1))))
-
     def forward(self, features):
-        if self.training:
-            h = checkpoint(self.bottleneck, *features, use_reentrant=False)
-        else:
-            h = self.bottleneck(*features)
+        h = self.conv1(F.relu(self.norm1(torch.cat(features, 1))))
         return self.conv2(F.relu(self.norm2(h)))
 
 
