@@ -109,3 +109,17 @@ on for 1,000 epochs at a tenth of the learning rate with the same weight decay.
   network predicts. *Why:* grokking was found where memorising comes with near-chance test
   accuracy on small training sets. Here the network already generalises (81.5%) by the
   time it has memorised 34,000 faces, so there is little left to discover late.
+
+## Guess about grokking on the simple CNN (grok grid)
+
+Written on 2026-10-01, after short test runs (2,000 steps) and before the full runs. The
+Omnigrok recipe on faces: the simple CNN (no batch norm), 1,000 training faces, weights
+started 3 times larger than usual, MSE loss, AdamW, 1e5 steps. In the test runs the 3x
+start memorised the training faces by step 1,750 at 38% validation accuracy, against 52%
+for the normal start.
+
+- **H15, grokking on faces.** With weight decay 0.1, validation accuracy of the 3x start
+  rises long after the training faces are memorised, towards the normal start's level,
+  while the weight norm falls. With 0.01 the rise is slower and may not finish within
+  1e5 steps; without weight decay validation accuracy stays low. The rise is gradual,
+  as on MNIST, not the sudden jump of the algorithmic tasks.

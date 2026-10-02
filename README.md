@@ -23,6 +23,7 @@ uv run python scripts/06_tune.py --stage shape   # stage 2: the network's shape 
 uv run python scripts/07_final.py --stage shape
 uv run python scripts/08_figures.py        # figures and tables for the report
 uv run python scripts/09_long.py --epochs 100   # long runs; a larger --epochs resumes and extends them
+uv run python scripts/10_grok.py            # grokking test on the simple CNN, 1,000 faces
 ```
 
 `scripts/run_all.sh` and `scripts/run_shape.sh` run the long steps one model per process.

@@ -310,3 +310,68 @@ settings at a tenth of the learning rate (4.3e-4; the cooldown fitted every trai
 from 8.7e-4 down) and unchanged weight decay. VGG because it trains fastest (3.1 s per
 epoch without augmentation, about an hour for 1,000 epochs). If validation accuracy does
 rise, a control run without weight decay is next, to tell grokking from plain fine-tuning.
+
+## 2026-10-01: grok run result
+
+1,000 epochs (110 to 1110) at a tenth of the learning rate, then the cooldown. No
+grokking: validation accuracy between spikes peaked at 82.2% in the second cycle and
+drifted down to about 80%. After the cooldown the run scores 79.8% on the test set
+(macro-F1 70.0), against 81.5% (72.0) where it started. Eleven loss spikes, two of them
+near-total collapses (training accuracy down to 35% and 32.5%), each refitting the
+training set from a damaged state. Likely reason: with batch norm the weight norm does not
+change the function, so weight decay cannot favour a simpler solution; it only raises the
+effective step size until training breaks (Lobacheva et al. 2021, the periodic behaviour of
+batch norm with weight decay). H14 holds. A fair grokking test needs a network without
+batch norm, a small training set and large initial weights (Omnigrok).
+
+## 2026-10-02: grokking on the simple CNN, design
+
+The Omnigrok recipe on faces (`scripts/10_grok.py`): the simple CNN, which has no batch
+norm, on 1,001 training faces drawn in class proportion, MSE loss on one-hot targets,
+AdamW at lr 1e-3, batch 200, no augmentation, 1e5 steps (20,000 passes over the faces),
+full float32. Grid: weights started at 1x or 3x their usual size, times weight decay 0.1,
+0.01 and 0. A 3x start scales the outputs by 3^5 = 243; an 8x start, as on MNIST, killed
+every ReLU in a test run and left a constant majority-class output. 9 minutes per run.
+
+## 2026-10-02: grokking on the simple CNN, result
+
+Validation accuracy (%). "Half-way" is the step where validation accuracy first covers
+half the distance from its lowest point after memorising to its peak.
+
+| Start, weight decay | Memorised at step | Val then | Val at 1e5 steps | Half-way at step |
+|---|---|---|---|---|
+| 3x, 0.1 | 1,500 | 43.2 | 54.6 | 18,500 |
+| 3x, 0.01 | 1,500 | 38.9 | 49.6 | 16,500 |
+| 3x, 0 | 1,500 | 39.6 | 45.1 (peak 48.9) | 16,250 |
+| 1x, 0.1 | 500 | 52.2 | 57.3 | 9,500 |
+| 1x, 0.01 | 500 | 51.2 | 54.6 (peak 55.8) | 8,750 |
+| 1x, 0 | 500 | 51.0 | 54.5 | 8,250 |
+
+- Every run rises long after it has memorised the training faces: half-way comes 11 to 19
+  times later. The rise is gradual, spread over about a decade of steps, not a jump.
+- The 3x start begins 9 to 12 points lower and takes twice as long. With weight decay 0.1
+  it closes most of the gap to the 1x start (54.6 against 57.3).
+- Weight decay does not set the timing: half-way at 16,250 to 18,500 steps for all three
+  3x runs, where Omnigrok expects the time to scale with 1 / weight decay. It sets how far
+  the rise goes and whether it lasts. Without it the 3x run falls back from 48.9 to 45.1
+  while its weights grow to 8.6x, and its macro-F1 ends below where it started (21.4
+  against 22.7).
+- The one measure that moves with the rise in every 3x run is NC1 on the training faces:
+  it falls about tenfold during the rise (weight decay 0: 0.65 at step 10,000, 0.08 at
+  30,000). At the 1x start NC1 is already 0.03 when the faces are memorised. Reading: the
+  3x start first fits the training faces without sorting its features by class, a lazy,
+  kernel-like fit, and generalises once the features change. This is the lazy-to-rich
+  account of grokking (Kumar et al. 2024).
+- Weight norm: with weight decay 0.1 the 3x run's norm falls to 1.56x by step 19,250,
+  where it is half-way, and then grows again to 2.95x; the 1x run ends at 2.52x. AdamW's
+  steps have a fixed size, so the norm likely settles where weight decay balances them,
+  whatever the start.
+- Representation entropy (Khanh et al. 2026) peaks at or after half-way in the 3x runs and
+  falls afterwards, so it gives no warning here. Absolute weight entropy falls with weight
+  decay and rises without it while validation rises in both: it follows the weight norm.
+- Macro-F1 stays at 32 to 34 in the 1x runs, so their late gain is in the common classes.
+  The 3x run with weight decay 0.1 goes from 24 to 31.
+
+H15 holds in part. Right: with weight decay 0.1 the 3x start rises late and gradually
+towards the 1x level. Wrong: without weight decay it rises too (and falls back), and 0.01
+is not slower, only lower.
