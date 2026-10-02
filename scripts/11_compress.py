@@ -17,15 +17,13 @@ not touched here.
 """
 import argparse
 import json
-import statistics
-import time
 import warnings
 from pathlib import Path
 
 import torch
 from torch.fx.experimental.optimization import fuse
 
-from fer.compress import compress, int8, macs, output_stats, size_bytes
+from fer.compress import compress, int8, macs, output_stats, size_bytes, speed
 from fer.metrics import scores
 from fer.models import build
 from fer.runs import RUNS
@@ -50,34 +48,6 @@ def load(model):
     return net.eval()
 
 
-def timed(fn, n):
-    for _ in range(max(2, n // 5)):
-        fn()
-    t = []
-    for _ in range(n):
-        t0 = time.perf_counter()
-        fn()
-        t.append(time.perf_counter() - t0)
-    return 1e3 * statistics.median(t)
-
-
-@torch.inference_mode()
-def speed(model, gpu=True):
-    out = {}
-    if gpu:
-        m, a, b = model.cuda(), x1.cuda(), x256.cuda()
-        out["gpu_1_ms"] = timed(lambda: (m(a), torch.cuda.synchronize()), 100)
-        out["gpu_256_ms"] = timed(lambda: (m(b), torch.cuda.synchronize()), 30)
-    m = model.cpu()
-    torch.set_num_threads(8)
-    out["cpu_1_ms"] = timed(lambda: m(x1), 50)
-    out["cpu_256_ms"] = timed(lambda: m(x256), 5)
-    torch.set_num_threads(1)
-    out["cpu1_1_ms"] = timed(lambda: m(x1), 30)
-    torch.set_num_threads(8)
-    return out
-
-
 @torch.inference_mode()
 def score(model, device):
     model = model.to(device).eval()
@@ -91,7 +61,7 @@ def row(model, gpu=True, **extra):
     if gpu:
         r["macs"] = macs(model.cpu(), x1)
     r.update(score(model, "cuda" if gpu else "cpu"))
-    r.update(speed(model, gpu))
+    r.update(speed(model, x1, x256, gpu))
     return r
 
 

@@ -12,7 +12,7 @@
   normalised to sum 1), divided by its maximum, averaged over layers. 1: every direction
   is used equally; lower: the layer is closer to low rank, and easier to compress.
 - repr_entropy: the same for the covariance of the penultimate features of the validation
-  faces (Khanh et al. 2026: it collapses shortly before grokking).
+  faces (Truong et al. 2026: it collapses shortly before grokking).
 - nc1: neural collapse, the spread of the penultimate features within a class against the
   spread between classes, on training faces (Papyan et al. 2020). Falls towards 0 when
   each class collapses to a point, which happens when training runs far past fitting.

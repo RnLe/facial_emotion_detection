@@ -2,7 +2,7 @@
 import torch
 from torch import nn
 
-from fer.compress import compress, low_rank_layer, output_stats, spatial_layer, tucker2_layer
+from fer.compress import allocate, compress, low_rank_layer, output_stats, spatial_layer, tucker2_layer
 from fer.models import build
 
 
@@ -32,3 +32,12 @@ def test_compress_keeps_shapes():
         small, replaced = compress(model, method, 0.9, stats)
         assert replaced > 0 and small(x).shape == (8, 7)
         assert sum(p.numel() for p in small.parameters()) < sum(p.numel() for p in model.parameters())
+
+
+def test_allocate_meets_the_budget_where_it_costs_least():
+    # layer a is sensitive, layer b is not: the cut should come from b
+    table = {"a": {"params": 100, "options": [(1, 10, 1.0), (5, 50, 0.1)]},
+             "b": {"params": 100, "options": [(1, 10, 0.01), (5, 50, 0.001)]}}
+    ranks, params = allocate(table, total=210, target=130)
+    assert params <= 130 and ranks == {"b": 1}
+    assert allocate(table, total=210, target=10) is None

@@ -431,6 +431,197 @@ def shape_final_figures():
     Path("results/shape_final.json").write_text(json.dumps(summary, indent=1))
 
 
+def write_table(name, rows):
+    with open(TABLES / name, "w") as f:
+        f.writelines(",".join(f'"{c}"' for c in row) + "\n" for row in rows)
+
+
+def long_figures():
+    """Long runs: 100 epochs at a constant learning rate, then a 10-epoch cooldown."""
+    trio, variants = ["vgg", "resnet", "densenet"], ["tuned", "larger", "memorize"]
+    style = {"tuned": "-", "larger": "--", "memorize": ":"}
+    runs = {(m, v): json.loads(Path("runs/long", m, f"{v}.json").read_text()) for m in trio for v in variants
+            if Path("runs/long", m, f"{v}.json").exists()}
+    if len(runs) < 9:
+        return
+    cool = {(m, v): json.loads(Path("runs/cooldown", m, f"{v}_e100.json").read_text()) for m, v in runs}
+    final, shape_final = load("final"), load("shape_final")
+    ref = {"tuned": final, "larger": shape_final}
+    rows = [["Model", "Run", "Params", "Val peak (epoch)", "Clean train, ep. 100", "Test after cooldown", "Test F1", "60 epochs, cosine"]]
+    for m in trio:
+        for v in variants:
+            h, c = runs[m, v]["history"], cool[m, v]
+            peak = max(h, key=lambda e: e["val_accuracy"])
+            refs = ref.get(v, {}).get(m, [])
+            r60 = f"{100 * np.mean([r['test']['accuracy'] for r in refs]):.1f}" if refs else ""
+            rows.append([NAMES[m], v, f"{runs[m, v]['params'] / 1e6:.1f} M", f"{100 * peak['val_accuracy']:.1f} ({peak['epoch']})",
+                         f"{100 * h[-1]['train_clean_accuracy']:.1f}", f"{100 * c['test']['accuracy']:.1f}", f"{100 * c['test']['macro_f1']:.1f}", r60])
+    write_table("long.csv", rows)
+    panels = [("val_accuracy", "Val accuracy (%)", 100), ("train_clean_accuracy", "Train accuracy, no augmentation (%)", 100),
+              ("weight_rank", "Weight spectral entropy", 1)]
+    fig, axes = plt.subplots(len(panels), 3, figsize=(7.2, 6.2), sharex=True)
+    for j, m in enumerate(trio):
+        for i, (key, label, scale) in enumerate(panels):
+            ax = axes[i, j]
+            for v in variants:
+                h = runs[m, v]["history"]
+                ax.plot([e["epoch"] for e in h], [scale * e[key] for e in h], style[v], color=COLORS[m], lw=1.1, label=v)
+            if i == 0:
+                ax.set_title(NAMES[m], fontsize=9)
+            if j == 0:
+                ax.set_ylabel(label, fontsize=8)
+            if i == len(panels) - 1:
+                ax.set_xlabel("epoch")
+    axes[0, 0].legend(frameon=False, fontsize=7)
+    fig.tight_layout()
+    fig.savefig(OUT / "long_curves.svg")
+    plt.close(fig)
+
+
+def grok_figures():
+    """The grokking tests: VGG with batch norm continued for 1,000 epochs, the simple CNN and
+    VGG without batch norm on 1,000 training faces (Omnigrok recipe)."""
+    files = sorted(Path("runs/grok/cnn").glob("*.json")) + sorted(Path("runs/grok/vgg").glob("*.json"))
+    runs = [json.loads(f.read_text()) for f in files]
+    if len(runs) < 7:
+        return
+    rows = [["Network", "Start", "Weight decay", "Memorised at step", "Val then", "Peak (step)", "Val at the end", "Half-way at step"]]
+    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.6))
+    colors = {1.0: "#8c8c8c", 3.0: "#c9493a"}
+    dash = {0.1: "-", 0.01: "--", 0.0: ":"}
+    for r in runs:
+        c, h = r["config"], [e for e in r["history"] if e["step"] <= 100_000]
+        mem = next(e for e in h if e["train_accuracy"] >= 0.999)
+        post = [e for e in h if e["step"] >= mem["step"]]
+        low, peak = min(post, key=lambda e: e["val_accuracy"]), max(post, key=lambda e: e["val_accuracy"])
+        half = next(e["step"] for e in post if e["step"] >= low["step"] and e["val_accuracy"] >= (low["val_accuracy"] + peak["val_accuracy"]) / 2)
+        net = "simple CNN" if c["model"] == "cnn" else "VGG, no batch norm"
+        rows.append([net, f"{c['alpha']:g}x", f"{c['weight_decay']:g}", f"{mem['step']:,}", f"{100 * mem['val_accuracy']:.1f}",
+                     f"{100 * peak['val_accuracy']:.1f} ({peak['step']:,})", f"{100 * h[-1]['val_accuracy']:.1f}", f"{half:,}"])
+        color = colors.get(c["alpha"], COLORS["vgg"])
+        for ax, key, scale in zip(axes, ["val_accuracy", "nc1", "weight_norm_rel"], [100, 1, 1]):
+            ax.plot([e["step"] for e in h], [scale * e[key] for e in h], dash[c["weight_decay"]], color=color, lw=1,
+                    label=f"{net}, {c['alpha']:g}x, wd {c['weight_decay']:g}")
+    write_table("grok.csv", rows)
+    for ax, title in zip(axes, ["Val accuracy (%)", "NC1, training faces", "Weight norm / usual start"]):
+        ax.set_xscale("log")
+        ax.set_xlabel("step")
+        ax.set_title(title, fontsize=9)
+    axes[1].set_yscale("log")
+    axes[0].set_ylim(30, 60)
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="lower center", ncol=4, frameon=False, fontsize=6.5)
+    fig.tight_layout(rect=(0, 0.14, 1, 1))
+    fig.savefig(OUT / "grok_curves.svg")
+    plt.close(fig)
+
+    # VGG with batch norm, continued from the memorised run
+    vgg = Path("runs/long/vgg/grok.json")
+    if vgg.exists():
+        h = json.loads(vgg.read_text())["history"]
+        fig, ax = plt.subplots(figsize=(7.2, 2.2))
+        ax.plot([e["epoch"] for e in h], [100 * e["val_accuracy"] for e in h], color=COLORS["vgg"], lw=1, label="val accuracy (%)")
+        ax.set_ylabel("Val accuracy (%)")
+        ax.set_xlabel("epoch")
+        ax2 = ax.twinx()
+        ax2.plot([e["epoch"] for e in h], [e["train_loss"] for e in h], color="#555", lw=0.7, label="train loss")
+        ax2.set_yscale("log")
+        ax2.set_ylabel("Train loss")
+        ax2.spines["right"].set_visible(True)
+        fig.tight_layout()
+        fig.savefig(OUT / "grok_vgg_bn.svg")
+        plt.close(fig)
+
+
+def compress_figures():
+    """Compression of the larger long-run models: one threshold for all layers without
+    fine-tuning (results/compress.json), per-layer ranks with repair (runs/repair), int8
+    (runs/quant) and the same-size networks trained from scratch (runs/scratch)."""
+    path = Path("results/compress.json")
+    if not path.exists():
+        return
+    sweep = json.loads(path.read_text())
+    trio = [m for m in ["vgg", "resnet", "densenet"] if m in sweep]
+    methods = {"low_rank": ("output-based low rank", "#3a78c9"), "tucker2": ("Tucker-2", "#c9493a"), "spatial": ("spatial split", "#2e9d6a")}
+    rep = {m: [json.loads(f.read_text()) for f in sorted(Path("runs/repair", m).glob("*.json"))
+               if not f.name.endswith("_sensitivity.json")] for m in trio}
+    rep = {m: [r for r in rs if r.get("status") == "done" and not r["config"]["iteration"].endswith(("_lr0.1", "_lr0.3"))] for m, rs in rep.items()}
+    quant = {m: {f.stem: json.loads(f.read_text()) for f in sorted(Path("runs/quant", m).glob("*.json"))} for m in trio}
+    scratch = load("scratch")
+    mb = lambda b: b / 2**20
+
+    # one threshold, strongest setting within 0.5 points
+    rows = [["Model", "Method", "Threshold", "Val acc", "Fewer params", "Fewer MACs", "CPU, 1 face", "GPU, 1 face"]]
+    for m in trio:
+        b = sweep[m]["baseline"]
+        rows.append([NAMES[m], "uncompressed", "", f"{100 * b['val_accuracy']:.1f}", f"{b['params'] / 1e6:.1f} M", f"{b['macs'] / 1e6:.0f} M",
+                     f"{b['cpu_1_ms']:.1f} ms", f"{b['gpu_1_ms']:.2f} ms"])
+        for k, (label, _) in methods.items():
+            ok = [r for r in sweep[m][k] if b["val_accuracy"] - r["val_accuracy"] <= 0.005]
+            r = min(ok, key=lambda r: r["params"])
+            rows.append(["", label, f"{r['tau']:g}", f"{100 * r['val_accuracy']:.1f}", f"{b['params'] / r['params']:.1f}x", f"{b['macs'] / r['macs']:.1f}x",
+                         f"{b['cpu_1_ms'] / r['cpu_1_ms']:.2f}x", f"{b['gpu_1_ms'] / r['gpu_1_ms']:.2f}x"])
+    write_table("compress_threshold.csv", rows)
+
+    # per-layer ranks and repair
+    rows = [["Model", "Method", "Target", "Params", "MACs", "Val before", "Val after", "Test", "CPU, 1 face", "GPU, 1 face"]]
+    for m in trio:
+        b = sweep[m]["baseline"]
+        rows.append([NAMES[m], "uncompressed", "", f"{b['params'] / 1e6:.2f} M", f"{b['macs'] / 1e6:.0f} M", "", f"{100 * b['val_accuracy']:.1f}",
+                     f"{100 * json.loads(Path('runs/cooldown', m, 'larger_e100.json').read_text())['test']['accuracy']:.1f}",
+                     f"{b['cpu_1_ms']:.1f} ms", f"{b['gpu_1_ms']:.2f} ms"])
+        for r in sorted(rep[m], key=lambda r: (list(methods).index(r["config"]["method"]), r["config"]["budget"])):
+            rows.append(["", methods[r["config"]["method"]][0], f"{r['config']['budget']:g}x", f"{r['params'] / 1e6:.2f} M", f"{r['macs'] / 1e6:.0f} M",
+                         f"{100 * r['zero_shot']['accuracy']:.1f}", f"{100 * r['val']['accuracy']:.1f}", f"{100 * r['test']['accuracy']:.1f}",
+                         f"{r['speed']['cpu_1_ms']:.1f} ms", f"{r['speed']['gpu_1_ms']:.2f} ms"])
+    write_table("compress_repair.csv", rows)
+
+    # int8
+    rows = [["Model", "Version", "Size", "Val acc", "Test acc", "CPU, 1 face", "CPU, 256 faces"]]
+    for m in trio:
+        b = sweep[m]["baseline"]
+        rows.append([NAMES[m], "fp32", f"{mb(b['bytes']):.1f} MB", f"{100 * b['val_accuracy']:.1f}", "", f"{b['cpu_1_ms']:.1f} ms", f"{b['cpu_256_ms']:.0f} ms"])
+        for k, label in [("int8", "int8 after training"), ("int8_cat_float", "int8, concatenations in float")]:
+            if k in sweep[m]:
+                r = sweep[m][k]
+                rows.append(["", label, f"{mb(r['bytes']):.1f} MB", f"{100 * r['val_accuracy']:.1f}", "", f"{r['cpu_1_ms']:.1f} ms", f"{r['cpu_256_ms']:.0f} ms"])
+        for name, r in quant[m].items():
+            if r.get("status") != "done" or name.endswith("_int8") and "_4x" not in name:
+                continue
+            label = {"qat": "quantisation-aware training", "qat_cat_float": "quantisation-aware, concatenations in float"}.get(name)
+            label = label or f"{methods[name.split('_')[0] if not name.startswith('low') else 'low_rank'][0]} 4x + int8"
+            rows.append(["", label, f"{mb(r['bytes']):.1f} MB", f"{100 * r['val']['accuracy']:.1f}", f"{100 * r['test']['accuracy']:.1f}",
+                         f"{r['speed']['cpu_1_ms']:.1f} ms", f"{r['speed']['cpu_256_ms']:.0f} ms"])
+    write_table("compress_int8.csv", rows)
+
+    # trade-off figure: validation accuracy against size
+    fig, axes = plt.subplots(1, len(trio), figsize=(7.2, 2.7), sharey=True)
+    for ax, m in zip(np.atleast_1d(axes), trio):
+        b = sweep[m]["baseline"]
+        for k, (label, color) in methods.items():
+            pts = sorted((mb(r["bytes"]), 100 * r["val_accuracy"]) for r in sweep[m][k])
+            ax.plot(*zip(*pts), "--", color=color, lw=0.9, alpha=0.7)
+            done = sorted((mb(r["bytes"]), 100 * r["val"]["accuracy"]) for r in rep[m] if r["config"]["method"] == k)
+            if done:
+                ax.plot(*zip(*done), "o-", color=color, ms=3.5, lw=1.2, label=label)
+        ax.scatter([mb(b["bytes"])], [100 * b["val_accuracy"]], color="black", s=22, zorder=3, label="uncompressed")
+        q = [r for r in quant[m].values() if r.get("status") == "done"]
+        if q:
+            ax.scatter([mb(r["bytes"]) for r in q], [100 * r["val"]["accuracy"] for r in q], marker="x", color="#555", s=18, label="int8 versions")
+        if m in scratch:
+            ax.scatter([mb(4 * r["params"]) for r in scratch[m]], [100 * r["val"]["accuracy"] for r in scratch[m]], marker="s",
+                       facecolor="white", edgecolor="#8a5cc9", s=22, zorder=3, label="same size, from scratch")
+        ax.set_xscale("log")
+        ax.set_title(NAMES[m], fontsize=9)
+        ax.set_xlabel("size (MB, log)")
+        ax.set_ylim(max(60, 100 * b["val_accuracy"] - 15), 100 * b["val_accuracy"] + 1.5)
+    np.atleast_1d(axes)[0].set_ylabel("Val accuracy (%)")
+    handles, labels = np.atleast_1d(axes)[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=6, frameon=False, fontsize=7)
+    fig.tight_layout(rect=(0, 0.1, 1, 1))
+    fig.savefig(OUT / "compress_tradeoff.svg")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     data_figures()
     baseline_figures()
@@ -438,4 +629,7 @@ if __name__ == "__main__":
     final_figures()
     shape_figures()
     shape_final_figures()
+    long_figures()
+    grok_figures()
+    compress_figures()
     print(sorted(p.name for p in OUT.iterdir()))

@@ -2,7 +2,8 @@
 
 Seven network architectures, from a plain CNN to a vision transformer, trained from scratch
 on one cleaned dataset (FER2013 with FER+ labels, plus RAF-DB). The question: how much does
-each architecture gain from hyperparameter tuning?
+each architecture gain from hyperparameter tuning? Follow-ups on the three strongest: longer
+training, grokking, and compression (low rank, Tucker-2, spatial split, int8).
 
 Work in progress. Notes on every step are in [docs/journal.md](docs/journal.md); the guesses
 made before training are in [docs/hypotheses.md](docs/hypotheses.md).
@@ -24,6 +25,10 @@ uv run python scripts/07_final.py --stage shape
 uv run python scripts/08_figures.py        # figures and tables for the report
 uv run python scripts/09_long.py --epochs 100   # long runs; a larger --epochs resumes and extends them
 uv run python scripts/10_grok.py            # grokking test on the simple CNN, 1,000 faces
+uv run python scripts/11_compress.py        # compression, each method on its own, no fine-tuning
+uv run python scripts/12_repair.py          # per-layer ranks for a parameter budget, then repair
+uv run python scripts/13_quant.py           # int8 on top of the repaired models, DenseNet with quantisation-aware training
+uv run python scripts/14_scratch.py         # same-size networks trained from scratch, the fair baseline
 ```
 
 `scripts/run_all.sh` and `scripts/run_shape.sh` run the long steps one model per process.

@@ -417,6 +417,147 @@ second pick.
 - *For these three models the published sizes were already right.* Stage 2 cost about 11
   GPU hours and changed no conclusion of stage 1.
 
+= Long training <sec-long>
+
+The final runs train for 60 epochs with a learning rate that decays to zero, so their
+length is fixed in advance and leaves open whether the models had converged. The three
+strongest models were trained further, in three runs each, for 100 epochs at a constant
+learning rate after the warmup:
+
+- *Tuned:* the stage 1 best settings at the default shape.
+- *Larger:* the stage 2 best shape and settings.
+- *Memorize:* the stage 1 settings without augmentation, label smoothing and dropout, and
+  with the weight decay set so that learning rate times weight decay is $10^(-3)$ per
+  step, as in the original grokking runs @power2022. A network that can learn its
+  training set by heart, to see whether it starts to generalise late.
+
+A constant learning rate leaves the runs open-ended. To see what a run would reach if it
+ended at a given epoch, a branch of 10 epochs with the learning rate falling linearly to
+zero (a cooldown, as in warmup-stable-decay schedules @hagele2024) starts from its
+checkpoint and is scored on validation and test; the main run never sees it. Besides loss
+and accuracy, every epoch records the spectral entropy of each weight matrix (1 when all
+its directions carry equal weight, lower when it is closer to low rank) and neural
+collapse (NC1 @papyan2020: the spread of the penultimate features within a class against
+the spread between classes, on training faces). Guesses written before the runs:
+
+11. *Convergence.* Validation accuracy levels off within 100 epochs while the clean
+  training accuracy keeps rising. After the cooldown the runs land within a point of the
+  60-epoch final runs: training longer does not help by itself.
+12. *No grokking yet.* The memorize runs learn more than 95% of the training faces within
+  100 epochs; their validation accuracy falls behind and does not recover.
+13. *Compressibility.* The weights' spectral entropy falls during long training, most in
+  the memorize runs.
+
+#let longt = csv("tables/long.csv")
+#figure(
+  text(size: 7.5pt, table(
+    columns: longt.first().len(),
+    align: (left, left) + (right,) * 6,
+    table.header(..longt.first().map(h => [*#h*])),
+    ..longt.slice(1).flatten(),
+  )),
+  caption: [Long runs, one seed each, in %. Clean train: 4,316 fixed training faces without
+    augmentation. Test after a 10-epoch cooldown from epoch 100. Last column: the mean of the
+    60-epoch final runs (three seeds) with the same shape and settings.],
+) <tab-long>
+
+#figure(image("figures/long_curves.svg", width: 100%), caption: [The long runs per epoch, at a constant learning rate (the cooldowns are not shown). Bottom: the spectral entropy of the weights, averaged over the conv and dense layers.]) <fig-long>
+
+- *Longer alone does not help.* After the cooldown the tuned runs score 0.2 to 0.6 points
+  below their 60-epoch counterparts, the larger runs between 0.1 below and 0.6 above, all
+  within the noise of one seed (@tab-long).
+- *Validation rises slowly, the fit to the training set faster.* After epoch 40, VGG's
+  validation accuracy gains less than a point; ResNet-18 and DenseNet gain 1 to 2 points
+  and are still improving at epoch 100 (@fig-long). The clean training accuracy keeps
+  rising, to 95 to 99% for VGG and ResNet-18 and 86 to 89% for DenseNet.
+- *The memorize runs do not memorise at a constant learning rate.* They fit 86 to 94% of
+  the clean training faces; the noise of the steps keeps them from the rest, and only the
+  cooldown takes them to 100%. Their validation accuracy peaks early (epoch 18 for VGG)
+  and then falls; after the cooldown they score 1.5 to 4.4 points below the tuned runs.
+- *The weights drift towards low rank,* in every run and most in the memorize runs (VGG:
+  0.996 to 0.901).
+
+= Grokking <sec-grok>
+
+Grokking is generalisation long after a network has learned its training set by heart
+@power2022. It was found on small algorithmic tasks and, with large initial weights, on
+MNIST @liu2023omnigrok. Two tests here.
+
+*VGG with batch norm.* VGG's memorize run after its cooldown (every training face learned,
+81.5% validation accuracy) trained on for 1,000 epochs at a tenth of the learning rate and
+the same weight decay. The guess:
+
+14. *No grokking.* Validation accuracy rises by less than a point: the network already
+  generalises when it has memorised 34,000 faces, so little is left to find late.
+
+#figure(image("figures/grok_vgg_bn.svg", width: 100%), caption: [VGG with batch norm, continued from its memorised state for 1,000 epochs: validation accuracy and training loss (log scale) per epoch.]) <fig-grok-vgg>
+
+There was no grokking (@fig-grok-vgg). Validation accuracy between the loss spikes peaked
+at 82.2% and drifted down to about 80%; after a cooldown the run scores 79.8% on the test
+set, against 81.5% where it started. Eleven loss spikes occurred, two of them near-total
+collapses (training accuracy down to 35% and 32.5%). With batch norm, the size of the conv
+weights does not change what the network computes, so weight decay cannot favour a
+simpler solution. It only shrinks the weights, which raises the effective step size until
+training breaks @vanlaarhoven2017 @lobacheva2021.
+
+*Without batch norm, on 1,000 faces.* The setting of @liu2023omnigrok: the simple CNN,
+which has no batch norm, on 1,001 training faces drawn in class proportion, MSE loss on
+one-hot targets, AdamW at a learning rate of $10^(-3)$, no augmentation, $10^5$ steps of
+200 faces in float32. The weights start at 1 or 3 times their usual size (3 times scales
+the outputs by $3^5 = 243$; the factor 8 used on MNIST killed every ReLU), each with
+weight decay 0.1, 0.01 and 0. A last run trains VGG without batch norm at a start that
+gives the same spread of outputs across faces as the CNN's 3x start (2.8x, weight decay
+0.1). The guesses:
+
+15. *Grokking on faces.* With weight decay 0.1 the validation accuracy of the 3x start
+  rises long after the training faces are memorised, towards the 1x start's level, and
+  gradually, as on MNIST. With 0.01 the rise comes later; without weight decay validation
+  accuracy stays low.
+16. *VGG without batch norm.* A late rise of about 5 points (its NC1 was already low after
+  2,000 steps of a test run).
+
+#let grokt = csv("tables/grok.csv")
+#figure(
+  text(size: 7.5pt, table(
+    columns: grokt.first().len(),
+    align: (left,) + (right,) * 7,
+    table.header(..grokt.first().map(h => [*#h*])),
+    ..grokt.slice(1).flatten(),
+  )),
+  caption: [Grokking on 1,000 training faces, validation accuracy in %, one seed each, up to
+    $10^5$ steps. Half-way: the step at which validation accuracy first covers half the
+    distance from its lowest point after memorising to its peak.],
+) <tab-grok>
+
+#figure(image("figures/grok_curves.svg", width: 100%), caption: [Validation accuracy, NC1 on the training faces (log scale) and the weight norm relative to the usual start, against training steps (log scale).]) <fig-grok>
+
+- *Every run generalises late, but gradually.* Validation accuracy rises in all seven runs
+  long after the training faces are memorised; half of the rise comes 11 to 19 times
+  later (@tab-grok). The rise spreads over about a decade of steps, with no jump.
+- *Large starting weights delay it.* The 3x start begins 9 to 12 points lower and reaches
+  half-way twice as late as the 1x start. With weight decay 0.1 it closes most of the gap
+  (54.6% against 57.3% at the end).
+- *Weight decay sets the size of the rise, not its timing.* All three 3x runs reach
+  half-way between 16,250 and 18,500 steps, where @liu2023omnigrok would expect the time
+  to grow with 1 / weight decay. Without weight decay the gain fades again while the
+  weights grow to 8.6 times their usual size.
+- *Neural collapse moves with the rise.* In every 3x run NC1 falls about tenfold during
+  the rise; at the 1x start it is already low when the faces are memorised (@fig-grok).
+  This fits the account of grokking as a change from lazy to rich learning @kumar2024: the
+  large start first fits the training faces with its random features and generalises
+  once the features themselves change. The measures proposed as signals of grokking do
+  not lead here: the spectral entropy of the penultimate features @truong2026 peaks at or
+  after the half-way point, and the absolute weight entropy @golechha2024 follows the
+  weight norm, falling with weight decay and rising without it.
+- *VGG without batch norm behaves alike and ends lower.* It memorises at 45.3%, peaks at
+  54.5% after 74,250 steps and then slips, below the simple CNN on the same faces. Every
+  5,000 steps or so its weight norm falls and jumps back by 40% within 250 steps, the
+  slingshot pattern of Adam on a fitted training set @thilak2022; validation is no higher
+  after a jump than before it.
+
+On faces, generalisation comes late in every setting tried, but never as the sudden jump
+known from the algorithmic tasks.
+
 = Hypotheses revisited
 
 + *Ranking: mostly right.* ResNet-18, VGG and DenseNet lead within a point of each other,
@@ -451,6 +592,21 @@ second pick.
 10. *Smaller networks: wrong.* No network with at most a quarter of the default's
   parameters came within a point of the best; the closest were 1.9 (ResNet-18) to 7.7
   points (VGG) below it.
+11. *Convergence: mostly right.* After the cooldown every long run lands within 0.6 points
+  of its 60-epoch counterpart. Validation did not fully level off: ResNet-18 and DenseNet
+  still gained 1 to 2 points between epochs 40 and 100.
+12. *No grokking yet: partly right.* No memorize run recovered, but none memorised more
+  than 94% of the training faces at the constant learning rate; only the cooldown took
+  them to 100%.
+13. *Compressibility: right.* The weights' spectral entropy fell in all nine runs, most in
+  the memorize runs.
+14. *No grokking (VGG with batch norm): right.* Validation drifted down by about 2 points,
+  and training broke down in eleven loss spikes.
+15. *Grokking on faces: partly right.* With weight decay 0.1 the 3x start rises late and
+  gradually towards the 1x level. Wrong: without weight decay it rises too and then falls
+  back, and with 0.01 the rise is not later, only smaller.
+16. *VGG without batch norm: wrong in size.* The late rise is 9 points, not 5, although
+  NC1 was already low; a late fall of NC1 is not needed for a late rise.
 
 = Limitations
 
@@ -474,5 +630,12 @@ second pick.
 - *Fixed sizes.* Stage 1 keeps the published sizes (0.8 to 11 M parameters); stage 2
   varies the shape only for the three strongest. TPE chases accuracy, so mid-sized
   networks were sampled less than large ones, and the size curve rests on few trials there.
+- *One seed after stage 2.* The long runs, the grokking runs and every compressed model
+  were trained once. Repeating the same repair gave results half a point apart, so
+  differences below that are not resolved.
+- *Timings on a shared machine.* Medians of repeated runs in PyTorch's eager mode, with
+  other programs running; the same model timed at the start and end of a sweep differed
+  by up to 12%. Compiled or exported models (ONNX, TensorRT) would be faster and could
+  rank the methods differently, and int8 was timed on the CPU only.
 
 #bibliography("refs.bib", style: "ieee")

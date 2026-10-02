@@ -157,3 +157,21 @@ variance fits into 4 to 5.5x fewer parameters for VGG and ResNet, 2x for DenseNe
   CPU 1.5 to 3x faster for 256 faces, less for a single face.
 - **H21, speed.** Splitting layers does not make a single face faster on the GPU (more
   layers to launch one after another); on the CPU the speedup stays below the MAC reduction.
+
+## Guesses about the repair stage
+
+Written on 2026-10-02 after three pilot repairs of VGG with low rank at 8x fewer parameters
+(per-layer ranks: 83.9% before, 85.4% after 10 epochs, against 86.0% uncompressed) and
+before the full grid, the int8 follow-ups and the networks trained from scratch.
+
+- **H22, repair.** With per-layer ranks and 10 repair epochs every method stays within 1
+  point of the uncompressed validation accuracy at 2x and 4x fewer parameters on VGG and
+  ResNet. At 8x low rank stays within 1 point; Tucker-2 and the spatial split lose more,
+  since they only touch the 3x3 convs and must cut those harder.
+- **H23, the fair baseline.** A network of the same size trained from scratch with the
+  same recipe as the stage finals is no worse than the repaired compressed one (Liu et al.
+  2019 found this for pruning).
+- **H24, both together.** int8 on top of a repaired factorised model gives another 4x in
+  size and loses less than 0.5 points more.
+- **H25, DenseNet in int8.** A few epochs of quantisation-aware training bring DenseNet's
+  int8 version to within 1 point of the float model, with the concatenations quantised.

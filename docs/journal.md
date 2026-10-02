@@ -283,7 +283,7 @@ when trained far longer than 60 epochs? `scripts/09_long.py`, measures in `fer/m
   of epochs (warmup-stable-decay) and is scored on validation and test.
 - Logged every epoch: accuracy and loss on 4,316 fixed training faces without
   augmentation (memorisation), validation scores, the train-validation gap, the spectral
-  entropy of the penultimate features (Khanh et al. 2026), the absolute weight entropy
+  entropy of the penultimate features (Truong et al. 2026), the absolute weight entropy
   (Golechha 2024), the spectral entropy of the weight matrices (closeness to low rank),
   weight norm, neural collapse (Papyan et al. 2020), and prediction entropy.
 - No model selection: the curves show every epoch, the cooldown scores the last one.
@@ -366,7 +366,7 @@ half the distance from its lowest point after memorising to its peak.
   where it is half-way, and then grows again to 2.95x; the 1x run ends at 2.52x. AdamW's
   steps have a fixed size, so the norm likely settles where weight decay balances them,
   whatever the start.
-- Representation entropy (Khanh et al. 2026) peaks at or after half-way in the 3x runs and
+- Representation entropy (Truong et al. 2026) peaks at or after half-way in the 3x runs and
   falls afterwards, so it gives no warning here. Absolute weight entropy falls with weight
   decay and rises without it while validation rises in both: it follows the weight norm.
 - Macro-F1 stays at 32 to 34 in the 1x runs, so their late gain is in the common classes.
@@ -475,3 +475,22 @@ Tucker-2 is always worse than output-based low rank (VGG 5.9 M: 82.0 against 86.
 6.1 M). H19 is wrong: the spatial split saves 2 to 3x on VGG and ResNet without loss.
 H20 holds for VGG and ResNet (with a larger single-face speedup than predicted for VGG)
 and fails for DenseNet. H21 holds.
+
+## 2026-10-02: repair stage, design and pilots
+
+Per-layer ranks instead of one threshold (`fer.compress.sensitivity` and `allocate`,
+`scripts/12_repair.py`). For each layer and candidate rank (fractions 1/64 to 3/4 of the
+layer's width), only that layer is replaced and the KL divergence from the original
+predictions is measured on 2,048 training faces that did not fit the projections. The
+ranks with the smallest summed KL that meet a parameter budget follow from a Lagrange
+weighting (each layer minimises KL + lambda x weights; lambda by bisection). Then 10 epochs
+of repair on the full training set with the model's own settings, the learning rate
+falling linearly to zero.
+
+Pilots on the hardest case, VGG with low rank at 8x fewer parameters (1.82 M): before the
+repair 83.9% validation accuracy, against 29.6% for one threshold at about the same size
+(tau 0.9, 1.72 M). The allocation keeps 38 directions in the last conv and 19 in the first
+dense layer, where the threshold kept 7 and 4. After 10 epochs: 85.4% with the learning
+rate starting at 0.1x the original, 85.3% at 0.3x, 85.4% at 0.1x with distillation from
+the uncompressed model (macro-F1 76.9 against 77.0 without). The grid uses 0.1x without
+distillation.
