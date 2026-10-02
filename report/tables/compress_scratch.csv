@@ -1,0 +1,7 @@
+"Model","Target","From scratch","Val","Test","Repaired (best on val)","Val","Test"
+"VGG-style","4x","3.76 M","85.1","83.2","output-based low rank, 3.48 M","85.5","84.2"
+"VGG-style","8x","1.84 M","85.1","84.3","output-based low rank, 1.82 M","84.8","84.3"
+"ResNet-18","4x","3.39 M","85.4","84.5","output-based low rank, 3.34 M","85.7","85.3"
+"ResNet-18","8x","1.73 M","85.0","83.9","Tucker-2, 1.70 M","84.7","84.9"
+"DenseNet-BC","4x","0.38 M","84.6","83.9","output-based low rank, 0.38 M","82.4","82.4"
+"DenseNet-BC","8x","0.22 M","84.3","83.4","output-based low rank, 0.19 M","77.2","75.0"

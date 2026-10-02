@@ -29,7 +29,13 @@
   close it: ResNet-18, VGG and DenseNet stay on top at about 85% test accuracy. A second
   stage that also tunes the width, depth and number of stages of these three finds nothing
   better than their published sizes: smaller networks lose accuracy, larger ones gain at
-  most 0.2 points.
+  most 0.2 points. Three follow-ups on these three models: training longer at a constant
+  learning rate does not beat the 60-epoch runs. Tests for grokking find late
+  generalisation on small training sets in every setting, but never the sudden jump known
+  from algorithmic tasks; with batch norm, weight decay only destabilises training.
+  Compression works where the layer outputs are low-dimensional: with ranks chosen per
+  layer, a short repair and int8, ResNet-18 becomes 16 times smaller at its original test
+  accuracy, or 29 times smaller and 6.8 times faster on one CPU thread at 0.7 points less.
 ]
 
 = Question
@@ -42,7 +48,9 @@ is owed to tuning.
 
 This study trains seven architectures with one pipeline on one dataset, first with
 defaults chosen before any training, then after the same tuning budget for each. The
-guesses made beforehand are listed in @sec-models and checked at the end.
+guesses made beforehand are listed in @sec-models and checked at the end. Three follow-ups
+take the strongest three models further: longer training (@sec-long), grokking
+(@sec-grok) and compression (@sec-compress).
 
 *Why a rebuild.* An earlier course project (2024) compared a DenseNet with a CNN on
 FER2013. A later review of its code found that neither of its two numbers measured test
@@ -558,6 +566,165 @@ gives the same spread of outputs across faces as the CNN's 3x start (2.8x, weigh
 On faces, generalisation comes late in every setting tried, but never as the sudden jump
 known from the algorithmic tasks.
 
+= Compression <sec-compress>
+
+Can the three strongest networks be made much smaller or faster without losing accuracy?
+Four methods, applied to the larger long-run models after their cooldown (VGG 14.8 M
+parameters, ResNet-18 13.7 M, DenseNet 1.5 M):
+
+- *Output-based low rank* @zhang2016. A layer's outputs on 4,096 training faces are
+  projected onto their main directions, after scaling each channel to unit variance (what
+  the following batch norm sees). The layer then computes only $r$ channels, and a 1×1
+  convolution maps them back to the full width.
+- *Tucker-2* @kim2016, from the weights alone: a 3×3 convolution becomes a 1×1 convolution
+  into fewer channels, a smaller 3×3 core, and a 1×1 convolution out.
+- *Spatial split* @jaderberg2014: a 3×3 convolution becomes a 3×1 convolution into $R$
+  channels and a 1×3 convolution, from the singular value decomposition of the weights
+  reshaped to $(C_"in" dot 3) times (C_"out" dot 3)$ @tai2016.
+- *int8* @jacob2018: weights and activations as 8-bit integers after training, calibrated
+  on training faces. PyTorch runs this on the CPU only.
+
+*Why it should work.* A convolution with $C_"in"$ input and $C_"out"$ output channels and
+$k times k$ kernels has $C_"out" C_"in" k^2$ weights; at rank $r$ the factorised layer has
+$r (C_"in" k^2 + C_"out")$, about $r slash C_"out"$ of the original, and the same share of
+the multiply-adds. The best rank-$r$ version loses exactly the energy beyond the $r$-th
+direction (Eckart-Young). Measured before any compression: the weights are close to full
+rank (keeping 95% of their squared singular values saves only 1.2 to 1.7 times the
+parameters), while the layer outputs are low-dimensional (95% of their variance fits into
+4 to 5.5 times fewer parameters for VGG and ResNet-18, 2 times for DenseNet). In VGG's
+last convolution, 7 of 616 directions hold 95% of the output variance: neural collapse
+@papyan2020 squeezes the deep features of 7 classes towards at most 6 dimensions.
+
+*Procedure.* First a sweep with one threshold for all layers (the share of variance or of
+squared singular values each layer keeps) and no fine-tuning. Then ranks per layer: every
+layer alone at each candidate rank, scored by the KL divergence from the original
+predictions on 2,048 other training faces; the ranks with the smallest summed KL that meet
+a budget of 2, 4 or 8 times fewer parameters; then 10 epochs of repair on the training set
+with the model's own settings, the learning rate falling from a tenth of the original to
+zero (a pilot found no gain from a higher rate or from distillation @hinton2015). Then
+int8 on top of the repaired models, quantisation-aware training for DenseNet, and networks
+of the same size trained from scratch, the fair baseline @liu2019rethinking. Speed is the
+median over repeated runs in fp32, on the GPU and on the CPU with 8 threads, for one face
+and for 256. Guesses written before the respective runs:
+
+17. *Output-based low rank.* At 99% of the output variance VGG and ResNet-18 lose less
+  than a point with about 2 times fewer parameters; at 95% several points. DenseNet saves
+  at most 1.3 times at 99%.
+18. *Tucker-2.* At the same size it loses more accuracy than output-based low rank.
+19. *Spatial split.* Under 2 times fewer parameters before accuracy drops.
+20. *int8.* 4 times smaller with under half a point lost; 1.5 to 3 times faster on the CPU
+  for 256 faces, less for one.
+21. *Speed.* No factorisation makes one face faster on the GPU; on the CPU the speedup
+  stays below the saving in multiply-adds.
+22. *Repair.* Within a point of the uncompressed model at 2 and 4 times fewer parameters
+  for every method on VGG and ResNet-18; at 8 times only low rank stays within a point.
+23. *The fair baseline.* A network of the same size trained from scratch is no worse than
+  the repaired one.
+24. *Both together.* int8 on top of a repaired model gives another 4 times in size and
+  costs less than half a point more.
+25. *DenseNet in int8.* Quantisation-aware training brings it to within a point of the
+  float model.
+
+#let cthr = csv("tables/compress_threshold.csv")
+#figure(
+  text(size: 7.5pt, table(
+    columns: cthr.first().len(),
+    align: (left, left) + (right,) * 6,
+    table.header(..cthr.first().map(h => [*#h*])),
+    ..cthr.slice(1).flatten(),
+  )),
+  caption: [One threshold for all layers, no fine-tuning: the strongest setting of each
+    method within half a point of the uncompressed validation accuracy. Speed for one face:
+    how many times faster than the uncompressed model, fp32, on the CPU (8 threads) and the
+    GPU.],
+) <tab-compress-threshold>
+
+#let crep = csv("tables/compress_repair.csv")
+#figure(
+  text(size: 7pt, table(
+    columns: crep.first().len(),
+    align: (left, left, left) + (right,) * 7,
+    table.header(..crep.first().map(h => [*#h*])),
+    ..crep.slice(1).flatten(),
+  )),
+  caption: [Ranks chosen per layer for 2, 4 and 8 times fewer parameters, validation
+    accuracy before and after 10 epochs of repair, test accuracy after, in %. Missing
+    targets were out of reach: Tucker-2 and the spatial split only touch the 3×3
+    convolutions.],
+) <tab-compress-repair>
+
+#let cint = csv("tables/compress_int8.csv")
+#figure(
+  text(size: 7pt, table(
+    columns: cint.first().len(),
+    align: (left, left) + (right,) * 5,
+    table.header(..cint.first().map(h => [*#h*])),
+    ..cint.slice(1).flatten(),
+  )),
+  caption: [int8 on the CPU (8 threads), alone and on top of the repaired models, in %.],
+) <tab-compress-int8>
+
+#figure(image("figures/compress_tradeoff.svg", width: 100%), caption: [Validation accuracy against size. Dashed: one threshold for all layers, no fine-tuning. Dots: ranks per layer, after repair. Crosses: int8 versions.]) <fig-compress>
+
+- *The outputs are compressible, the weights much less.* With one threshold and no
+  fine-tuning, output-based low rank keeps the accuracy at 2.4 times fewer parameters for
+  VGG and 4.2 for ResNet-18; Tucker-2, which only sees the weights, at 1.2 and 2.3
+  (@tab-compress-threshold). The spatial split does better than expected (2 and 3.1
+  times): the weights are close to full rank across channels, but not across the two
+  directions of the kernel.
+- *One threshold fails where the features have collapsed.* VGG's low rank breaks down
+  below 99% of the variance (51.8% validation accuracy at 95%): the threshold leaves 7
+  directions in the last convolution and 4 in the first dense layer, too few to separate
+  7 classes. Ranks chosen per layer from their measured effect avoid this: at 4 times
+  fewer parameters VGG keeps 85.8% before any repair.
+- *ResNet-18 compresses best.* After repair every method stays within a point of the
+  uncompressed model at 8 times fewer parameters (test 83.8 to 84.9% against 85.2%,
+  @tab-compress-repair); its skip connections carry the signal past the approximated
+  convolutions. VGG holds at 4 and 8 times only with low rank (test 84.2 and 84.3%
+  against 85.6%). DenseNet holds 2 times with low rank; its 1×1 layers, two thirds of its
+  parameters, are out of reach of the methods for 3×3 kernels, and the per-layer KL does
+  not add up over its 106 densely connected layers.
+- *Repair recovers most of a deep cut, but not all.* VGG's Tucker-2 and spatial split at 4
+  times cut the high-resolution layers, which are cheap in parameters, until only 55 M of
+  1,195 M multiply-adds remained; before repair they scored 57% and 30%, after it 83% and
+  77%. At 2 times the repair can cost half a point: restarting training moves a
+  cooled-down model out of its minimum.
+- *int8 is the simplest win, and it stacks.* After training it makes VGG and ResNet-18 4
+  times smaller at no cost in accuracy and 2 to 3.5 times faster on the CPU. On top of a
+  factorised model it costs at most 0.3 points more (@tab-compress-int8): ResNet-18 with
+  Tucker-2 at 4 times plus int8 is 16 times smaller (3.2 MB) and as accurate as the
+  original on the test set (85.4% against 85.2%); with the spatial split at 8 times it is
+  29 times smaller (1.8 MB), 0.7 points less accurate and 6.8 times faster on one CPU
+  thread. DenseNet breaks in int8 (60.7%): PyTorch gives all inputs of a concatenation one
+  shared scale, and DenseNet concatenates up to 18 feature groups of very different size.
+  Quantisation-aware training recovers it only to 79.7%.
+- *A network trained small from scratch is as good.* For VGG and ResNet-18 the repaired
+  models and networks of the same size trained from scratch with the final runs' recipe
+  (60 epochs, one seed) lie within a point of each other: at 4 times fewer parameters the
+  networks from scratch trail by 0.3 to 1.0 points, at 8 times they lead on validation and
+  are level or a point behind on the test set (@tab-compress-scratch). For DenseNet the network trained
+  from scratch is clearly better: 83.9% against 82.4% at 4 times fewer parameters, 83.4%
+  against 75.0% at 8 times (with 17% more parameters than the target, since its growth
+  rate must be a whole number). Factorising a trained network saves a new training run;
+  it does not find small networks that training from scratch would miss.
+
+#let cscr = csv("tables/compress_scratch.csv")
+#figure(
+  text(size: 7.5pt, table(
+    columns: cscr.first().len(),
+    align: (left, left, right, right, right, left, right, right),
+    table.header(..cscr.first().map(h => [*#h*])),
+    ..cscr.slice(1).flatten(),
+  )),
+  caption: [Networks of the same size trained from scratch against the repaired models (the
+    method with the best validation accuracy at each target), accuracy in %.],
+) <tab-compress-scratch>
+
+- *Speed depends on the hardware.* On the GPU every factorised model is slower for one
+  face (0.5 to 0.75 times the speed): more, thinner layers cost more launches than they
+  save. On one CPU thread the factorised models at 8 times are 2.6 to 3.6 times faster,
+  below their saving in multiply-adds (3.6 to 5.6 times); DenseNet gets no faster.
+
 = Hypotheses revisited
 
 + *Ranking: mostly right.* ResNet-18, VGG and DenseNet lead within a point of each other,
@@ -607,6 +774,30 @@ known from the algorithmic tasks.
   back, and with 0.01 the rise is not later, only smaller.
 16. *VGG without batch norm: wrong in size.* The late rise is 9 points, not 5, although
   NC1 was already low; a late fall of NC1 is not needed for a late rise.
+17. *Output-based low rank: right at 99%, wrong at 95%.* At 99% of the output variance no
+  model lost accuracy (2.4, 1.8 and 1.2 times fewer parameters). At 95% the guess failed
+  both ways: VGG collapsed to 51.8%, ResNet-18 lost nothing at 4.2 times fewer.
+18. *Tucker-2: right without fine-tuning.* At equal size it was always worse than
+  output-based low rank (VGG at about 6 M parameters: 82.0% against 86.0%). With ranks
+  per layer and repair the order turns on ResNet-18 at 8 times (test 84.9% against 83.8%).
+19. *Spatial split: wrong.* It saved 2 to 3 times without loss, more than Tucker-2.
+20. *int8: right for VGG and ResNet-18.* 4 times smaller, no loss, 2.6 to 2.7 times faster
+  for 256 faces, and for one face more than guessed for VGG (3.5 times). DenseNet lost 25
+  points.
+21. *Speed: right.* No factorised model was faster for one face on the GPU, and none sped up
+  on the CPU as much as its multiply-adds fell.
+22. *Repair: partly right.* ResNet-18 stayed within a point with every method at every
+  target, VGG only with low rank. At 8 times the guess was reversed on ResNet-18: Tucker-2
+  and the spatial split stayed within a point, low rank did not (1.2 points below on
+  validation).
+23. *The fair baseline: mostly right.* For VGG and ResNet-18 the networks trained from
+  scratch come within a point of the repaired ones (0.3 to 1.0 points behind at 4 times,
+  ahead on validation at 8 times); for DenseNet they are clearly better (1.5 and 8.4
+  points on the test set).
+24. *Both together: right for VGG and ResNet-18* (another 4 times in size, at most 0.3
+  points), wrong for DenseNet (7 points or more).
+25. *DenseNet in int8: wrong.* Quantisation-aware training reached 79.7%, 5.7 points below
+  the float model.
 
 = Limitations
 

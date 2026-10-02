@@ -494,3 +494,93 @@ dense layer, where the threshold kept 7 and 4. After 10 epochs: 85.4% with the l
 rate starting at 0.1x the original, 85.3% at 0.3x, 85.4% at 0.1x with distillation from
 the uncompressed model (macro-F1 76.9 against 77.0 without). The grid uses 0.1x without
 distillation.
+
+## 2026-10-02: repair stage, results
+
+27 planned repairs, 19 possible: Tucker-2 and the spatial split only touch the 3x3 convs,
+so they cannot reach 8x on VGG (its dense head holds 23% of the parameters) or even 2x on
+DenseNet (its 1x1 layers hold two thirds). Validation accuracy before and after the
+repair, test once at the end (uncompressed: VGG 86.0 / test 85.6, ResNet-18 85.6 / 85.2,
+DenseNet 85.4 / 85.0). Speed on one CPU thread, one face, against the uncompressed model:
+
+| Model | Method | Target | Before | After | Test | One thread |
+|---|---|---|---|---|---|---|
+| VGG | low rank | 2x / 4x / 8x | 86.2 / 85.8 / 83.9 | 85.9 / 85.5 / 84.8 | 85.1 / 84.2 / 84.3 | 1.1x / 1.8x / 2.6x |
+| VGG | Tucker-2 | 2x / 4x | 86.3 / 56.9 | 85.4 / 83.1 | 85.1 / 82.3 | 1.3x / 6.3x |
+| VGG | spatial | 2x / 4x | 86.0 / 30.1 | 85.8 / 77.0 | 85.0 / 75.4 | 1.2x / 5.8x |
+| ResNet-18 | low rank | 2x / 4x / 8x | 85.6 / 86.1 / 83.2 | 86.2 / 85.7 / 84.4 | 85.5 / 85.3 / 83.8 | 1.3x / 2.2x / 3.0x |
+| ResNet-18 | Tucker-2 | 2x / 4x / 8x | 85.4 / 85.1 / 84.5 | 86.1 / 85.5 / 84.7 | 85.6 / 85.4 / 84.9 | 1.2x / 2.3x / 3.6x |
+| ResNet-18 | spatial | 2x / 4x / 8x | 85.6 / 85.6 / 84.5 | 85.9 / 85.6 / 84.7 | 85.9 / 85.3 / 84.7 | 1.2x / 1.8x / 3.2x |
+| DenseNet | low rank | 2x / 4x / 8x | 85.0 / 48.3 / 7.9 | 85.5 / 82.4 / 77.2 | 84.9 / 82.4 / 75.0 | 0.9x / 1.0x / 1.0x |
+
+- Per-layer ranks beat one threshold by far where the threshold failed: VGG low rank at
+  about 4x, 85.8 before repair against 51.8; ResNet spatial at 8x, 84.5 against 76.5. Not
+  for DenseNet (4x: 48.3 against 50.9): its 106 layers each feed every later layer, so the
+  per-layer KL does not add up.
+- The allocation can cut the multiply-adds far more than the parameters: VGG Tucker-2 and
+  spatial at 4x keep 3.7 M parameters but only 55 M of 1,195 M MACs, cutting the
+  high-resolution layers that are cheap in weights. Each cut looked harmless on its own;
+  together they broke the network (30.1 and 56.9 before repair), and repair could not
+  fully recover them.
+- ResNet-18 compresses best: every method stays within a point at 8x on the test set, and
+  Tucker-2 at 8x is 3.6x faster on one CPU thread at 0.3 points below the uncompressed
+  model. Its skip connections carry the signal past the approximated convs.
+- At 2x the repair sometimes costs accuracy (VGG Tucker-2: 86.3 before, 85.4 after): it
+  starts at a tenth of the original learning rate, which moves a cooled-down model out of
+  its minimum, and 10 epochs do not fully settle it again.
+- On the GPU every compressed model is slower for one face (0.5 to 0.75x). DenseNet low
+  rank is no faster on the CPU either.
+
+H22 holds for ResNet-18 at every target and for low rank on VGG; it fails for VGG's
+Tucker-2 and spatial split at 4x. At 8x it is reversed on ResNet-18: Tucker-2 and the
+spatial split stay within a point (0.3 and 0.5 below on the test set), low rank does not
+(1.4 below).
+
+## 2026-10-03: int8 on top of the repaired models, and DenseNet with quantisation-aware training
+
+int8 after training (CPU, `scripts/13_quant.py`) on every repaired model. For VGG and
+ResNet-18 it costs at most 0.3 points of validation accuracy on top of the factorisation
+and multiplies the size reduction by 4. The best combinations (size against the fp32
+model; speed on one CPU thread for one face):
+
+| Model | Version | Size | Val | Test | One thread |
+|---|---|---|---|---|---|
+| ResNet-18 | uncompressed, fp32 | 52.3 MB | 85.6 | 85.2 | 26.0 ms |
+| ResNet-18 | Tucker-2 4x + int8 | 3.2 MB (16x) | 85.4 | 85.4 | 3.8x faster |
+| ResNet-18 | spatial 8x + int8 | 1.8 MB (29x) | 84.8 | 84.5 | 6.8x faster |
+| VGG | uncompressed, fp32 | 56.5 MB | 86.0 | 85.6 | 20.3 ms |
+| VGG | low rank 4x + int8 | 3.5 MB (16x) | 85.5 | 84.3 | 3.4x faster |
+| VGG | low rank 8x + int8 | 1.9 MB (30x) | 84.6 | 84.6 | 5.2x faster |
+
+DenseNet does not take int8 well. With the concatenations in float, int8 on its repaired
+low-rank models loses 7 to 57 points. Quantisation-aware training (5 epochs at 0.05x the
+learning rate, observers and batch norm frozen for the last 2) brings the fully quantised
+model from 60.7 to 79.7 on validation, still 5.7 points below float; with the
+concatenations kept in float it reached 83.8 with simulated int8 during training but 78.4
+after conversion, so the conversion around the float concatenations does not match what
+the training simulated.
+
+H24 holds for VGG and ResNet-18 (another 4x in size, at most 0.3 points) and fails for
+DenseNet. H25 is wrong: 5.7 points below float, not 1.
+
+## 2026-10-03: same-size networks from scratch
+
+The fair baseline (`scripts/14_scratch.py`): for 4x and 8x fewer parameters, the width
+whose parameter count comes closest, with the stage 2 depth and stages and the larger
+run's settings, trained with the final runs' recipe (60 epochs, one seed). Against the
+repaired model with the best validation accuracy at the same target (val / test):
+
+| Model | Target | From scratch | Repaired |
+|---|---|---|---|
+| VGG | 4x | 85.1 / 83.2 | 85.5 / 84.2 (low rank) |
+| VGG | 8x | 85.1 / 84.3 | 84.8 / 84.3 (low rank) |
+| ResNet-18 | 4x | 85.4 / 84.5 | 85.7 / 85.3 (low rank) |
+| ResNet-18 | 8x | 85.0 / 83.9 | 84.7 / 84.9 (Tucker-2) |
+| DenseNet | 4x | 84.6 / 83.9 | 82.4 / 82.4 (low rank) |
+| DenseNet | 8x | 84.3 / 83.4 | 77.2 / 75.0 (low rank) |
+
+For VGG and ResNet-18 within a point either way; for DenseNet the network from scratch is
+clearly better (its 8x network has 0.22 M parameters instead of 0.19 M, since the growth
+rate must be a whole number). H23 mostly holds: compression saves a training run but finds
+no small network that training from scratch misses. The planned runs of the study are
+complete.

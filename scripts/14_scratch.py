@@ -48,7 +48,7 @@ add_to_plan(plans)
 data = GPUData()
 for cfg in plans:
     record = record_path("scratch", cfg["model"], cfg["iteration"])
-    if is_done(record):
+    if is_done("scratch", cfg["model"], cfg["iteration"]):
         continue
     result, _ = run(cfg, data, test=True, record=record, log=None)
     print(f"{cfg['model']} {cfg['iteration']} from scratch: width {cfg['width']:.3f}, {result['params'] / 1e6:.2f} M "

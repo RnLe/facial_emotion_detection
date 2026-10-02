@@ -1,17 +1,21 @@
 """Figures and tables for the report, from data/processed and runs/. Rerun any time;
 parts whose runs are not finished yet are skipped."""
 import json
+import os
 from pathlib import Path
 
+os.environ.setdefault("SOURCE_DATE_EPOCH", "0")  # no date in the SVGs: a rerun only changes what changed
 import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.ticker
 import numpy as np
 
 from fer.data import CLASSES
 from fer.models import MODELS, NAMES
 
 matplotlib.use("Agg")
-plt.rcParams.update({"font.size": 9, "axes.spines.top": False, "axes.spines.right": False, "svg.fonttype": "none"})
+plt.rcParams.update({"font.size": 9, "axes.spines.top": False, "axes.spines.right": False, "svg.fonttype": "none",
+                     "svg.hashsalt": "fer"})
 OUT = Path("report/figures")
 OUT.mkdir(parents=True, exist_ok=True)
 FER, RAF = "#3a78c9", "#e0a33a"
@@ -579,19 +583,34 @@ def compress_figures():
     rows = [["Model", "Version", "Size", "Val acc", "Test acc", "CPU, 1 face", "CPU, 256 faces"]]
     for m in trio:
         b = sweep[m]["baseline"]
-        rows.append([NAMES[m], "fp32", f"{mb(b['bytes']):.1f} MB", f"{100 * b['val_accuracy']:.1f}", "", f"{b['cpu_1_ms']:.1f} ms", f"{b['cpu_256_ms']:.0f} ms"])
+        test = json.loads(Path("runs/cooldown", m, "larger_e100.json").read_text())["test"]["accuracy"]
+        rows.append([NAMES[m], "fp32", f"{mb(b['bytes']):.1f} MB", f"{100 * b['val_accuracy']:.1f}", f"{100 * test:.1f}", f"{b['cpu_1_ms']:.1f} ms", f"{b['cpu_256_ms']:.0f} ms"])
         for k, label in [("int8", "int8 after training"), ("int8_cat_float", "int8, concatenations in float")]:
             if k in sweep[m]:
                 r = sweep[m][k]
                 rows.append(["", label, f"{mb(r['bytes']):.1f} MB", f"{100 * r['val_accuracy']:.1f}", "", f"{r['cpu_1_ms']:.1f} ms", f"{r['cpu_256_ms']:.0f} ms"])
-        for name, r in quant[m].items():
-            if r.get("status") != "done" or name.endswith("_int8") and "_4x" not in name:
+        for name, label in [("qat", "quantisation-aware training"), ("qat_cat_float", "quantisation-aware, concatenations in float")] + [
+                (f"{k}_{t}x_int8", f"{methods[k][0]} {t}x + int8") for k in methods for t in (4, 8)]:
+            r = quant[m].get(name)
+            if r is None or r.get("status") != "done":
                 continue
-            label = {"qat": "quantisation-aware training", "qat_cat_float": "quantisation-aware, concatenations in float"}.get(name)
-            label = label or f"{methods[name.split('_')[0] if not name.startswith('low') else 'low_rank'][0]} 4x + int8"
             rows.append(["", label, f"{mb(r['bytes']):.1f} MB", f"{100 * r['val']['accuracy']:.1f}", f"{100 * r['test']['accuracy']:.1f}",
                          f"{r['speed']['cpu_1_ms']:.1f} ms", f"{r['speed']['cpu_256_ms']:.0f} ms"])
     write_table("compress_int8.csv", rows)
+
+    # same size from scratch against the repaired model chosen on validation
+    rows = [["Model", "Target", "From scratch", "Val", "Test", "Repaired (best on val)", "Val", "Test"]]
+    for m in trio:
+        for r in sorted(scratch.get(m, []), key=lambda r: r["config"]["budget"]):
+            t = r["config"]["budget"]
+            cands = [x for x in rep[m] if x["config"]["budget"] == t]
+            if not cands:
+                continue
+            best = max(cands, key=lambda x: (round(x["val"]["accuracy"], 4), x["val"]["macro_f1"]))
+            rows.append([NAMES[m], f"{t:g}x", f"{r['params'] / 1e6:.2f} M", f"{100 * r['val']['accuracy']:.1f}", f"{100 * r['test']['accuracy']:.1f}",
+                         f"{methods[best['config']['method']][0]}, {best['params'] / 1e6:.2f} M", f"{100 * best['val']['accuracy']:.1f}",
+                         f"{100 * best['test']['accuracy']:.1f}"])
+    write_table("compress_scratch.csv", rows)
 
     # trade-off figure: validation accuracy against size
     fig, axes = plt.subplots(1, len(trio), figsize=(7.2, 2.7), sharey=True)
@@ -604,13 +623,16 @@ def compress_figures():
             if done:
                 ax.plot(*zip(*done), "o-", color=color, ms=3.5, lw=1.2, label=label)
         ax.scatter([mb(b["bytes"])], [100 * b["val_accuracy"]], color="black", s=22, zorder=3, label="uncompressed")
-        q = [r for r in quant[m].values() if r.get("status") == "done"]
+        q = [r for name, r in quant[m].items() if r.get("status") == "done" and "_lr" not in name]
         if q:
             ax.scatter([mb(r["bytes"]) for r in q], [100 * r["val"]["accuracy"] for r in q], marker="x", color="#555", s=18, label="int8 versions")
         if m in scratch:
             ax.scatter([mb(4 * r["params"]) for r in scratch[m]], [100 * r["val"]["accuracy"] for r in scratch[m]], marker="s",
                        facecolor="white", edgecolor="#8a5cc9", s=22, zorder=3, label="same size, from scratch")
         ax.set_xscale("log")
+        ax.set_xticks([t for t in (0.5, 1, 2, 5, 10, 20, 50) if 0.4 * mb(b["bytes"]) / 40 < t < 1.5 * mb(b["bytes"])])
+        ax.xaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%g"))
+        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
         ax.set_title(NAMES[m], fontsize=9)
         ax.set_xlabel("size (MB, log)")
         ax.set_ylim(max(60, 100 * b["val_accuracy"] - 15), 100 * b["val_accuracy"] + 1.5)
