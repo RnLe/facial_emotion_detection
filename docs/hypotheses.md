@@ -123,3 +123,16 @@ for the normal start.
   while the weight norm falls. With 0.01 the rise is slower and may not finish within
   1e5 steps; without weight decay validation accuracy stays low. The rise is gradual,
   as on MNIST, not the sudden jump of the algorithmic tasks.
+
+## Guess about grokking on VGG without batch norm
+
+Written on 2026-10-02, after a 2,000-step test and before the long run. VGG without batch
+norm, alpha 2.8 (the same output spread across faces at step 0 as the CNN's alpha 3),
+weight decay 0.1, otherwise the CNN recipe, 2e5 steps, bf16. In the test it memorised the
+training faces by step 750 at 45.3% validation, and NC1 was already down to 0.03 by step
+2,000; the CNN's 3x start kept NC1 at 0.5 to 0.9 for 10,000 steps.
+
+- **H16, a small late rise.** Validation accuracy rises after memorising, gradually, by
+  about 5 points, like the CNN's 1x start, not the 11 points of its 3x start. *Why:* in
+  the CNN the big late rise came with the late fall of NC1, which here happened before
+  memorising was complete, so the features are already sorted by class.

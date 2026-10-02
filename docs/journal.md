@@ -375,3 +375,42 @@ half the distance from its lowest point after memorising to its peak.
 H15 holds in part. Right: with weight decay 0.1 the 3x start rises late and gradually
 towards the 1x level. Wrong: without weight decay it rises too (and falls back), and 0.01
 is not slower, only lower.
+
+## 2026-10-02: grokking on VGG without batch norm, design
+
+One long run (the user's choice) to see whether VGG behaves like the simple CNN once batch
+norm is gone. `VGG(norm=False)`: the convs get biases instead. With PyTorch's default
+initialisation the signal fades through the 10 weight layers until every face gets the
+same output, so the start is set by the spread of outputs across the 1,000 training faces
+at step 0: alpha 2.8 gives 3.5, the CNN's alpha 3 gives 3.2. No layer starts dead. Weight
+decay 0.1, lr 1e-3, batch 200, MSE, 2e5 steps, bf16 with torch.compile (20 ms per step;
+with MSE there is no softmax whose precision could matter). It continues the 2,000-step
+test from its checkpoint.
+
+## 2026-10-02: grokking on VGG without batch norm, result
+
+Stopped at step 105,000 of 200,000: validation peaked at step 74,250 and every measure had
+settled or was repeating. The checkpoint is kept, so the run can be continued.
+
+- Memorised at step 750 at 45.3% validation. Validation rose gradually to a peak of 54.5%,
+  half-way at step 11,250 (15 times later). Macro-F1 went from 25.9 to at most 30.1.
+- After step 75,000 it slips: 54.3% at 75,000, 52.8% at 100,000, while val loss and NC1
+  rise again (NC1 0.0008 at 50,000, 0.0054 at 100,000).
+- It ends below the simple CNN on the same faces (peak 57.5% for the CNN's 1x start, 55.2%
+  for its 3x start, both with weight decay 0.1). Without batch norm the extra depth does
+  not help on 1,000 faces.
+- Every 5,000 steps or so the weight norm slowly falls (to about 1.0x to 1.2x) and then
+  jumps back by 40% within 250 steps, with validation briefly 1 to 2 points lower. Training
+  accuracy stays at 100%. The CNN runs show the same pattern at a tenth of the size. There
+  is no batch norm here, so this is most likely the slingshot effect of Adam (Thilak et al.
+  2022): once the training set is fitted the gradients and Adam's running estimate of
+  their size both become tiny, weight decay erodes the fit until a gradient returns, and
+  divided by that tiny estimate the first steps are large. Validation is no higher after a
+  jump than before it.
+- What keeps changing slowly: relative weight entropy 0.977 at step 10,000 to 0.858 at
+  100,000, weight spectral entropy 0.988 to 0.743 (the layers drift towards low rank), both
+  slowing down tenfold over the run.
+
+H16 is wrong in size: the late rise is 9 points, not 5, although NC1 was already low before
+it started. NC1 falling late is not needed for a late rise; it only came with the larger
+rise of the CNN's 3x start.

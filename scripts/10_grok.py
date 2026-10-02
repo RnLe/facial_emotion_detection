@@ -18,7 +18,15 @@ and the long grok run only produced loss spikes).
 - Logged at log-spaced steps early and every 250 steps after: accuracy and loss on the
   1,000 training faces and on validation, and the measures from fer/measures.py.
 - Full float32 (no bfloat16, no TF32): grokking is sensitive to numerical precision.
+
+--model vgg runs the same test on VGG without batch norm (--bf16 for speed; with MSE loss
+there is no softmax whose precision could matter). With PyTorch's default initialisation
+the signal fades through its 10 weight layers until the output no longer depends on the
+face, so alpha is chosen to give the same spread of outputs across faces at step 0 as
+the CNN's alpha 3 (3.2): alpha 2.8 gives 3.5, with no dead layer. A checkpoint every
+2,500 steps; a larger --steps continues a run.
 """
+import os
 import argparse
 import json
 import time
@@ -34,6 +42,9 @@ from fer.runs import add_to_plan, record_path
 from fer.train import GPUData, save
 
 p = argparse.ArgumentParser()
+p.add_argument("--model", default="cnn", choices=["cnn", "vgg"])
+p.add_argument("--bf16", action="store_true")
+p.add_argument("--compile", action="store_true")
 p.add_argument("--alphas", nargs="+", type=float, default=[3, 1])
 p.add_argument("--wds", nargs="+", type=float, default=[0.1, 0.0, 0.01])
 p.add_argument("--steps", type=int, default=100_000)
@@ -69,10 +80,11 @@ def outputs(model, x, batch_size=1024):
     hook = head.register_forward_pre_hook(lambda m, inp: feats.append(inp[0]))
     model.eval()
     for k in range(0, len(x), batch_size):
-        outs.append(model(x[k:k + batch_size]))
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=args.bf16):
+            outs.append(model(x[k:k + batch_size]).float())
     hook.remove()
     model.train()
-    return torch.cat(outs), torch.cat(feats)
+    return torch.cat(outs), torch.cat(feats).float()
 
 
 def log_steps(total, every):
@@ -82,33 +94,49 @@ def log_steps(total, every):
 
 def run(alpha, wd, data, train_idx):
     name = f"a{alpha:g}_wd{wd:g}"
-    record = record_path("grok", "cnn", name)
-    if record.exists() and json.loads(record.read_text()).get("status") == "done":
+    record = record_path("grok", args.model, name)
+    checkpoint = record.with_suffix(".ckpt")
+    done = json.loads(record.read_text())["history"] if record.exists() else []
+    if done and done[-1]["step"] >= args.steps:
         return
-    cfg = {"model": "cnn", "stage": "grok", "iteration": name, "alpha": alpha, "weight_decay": wd, "lr": args.lr,
+    cfg = {"model": args.model, "stage": "grok", "iteration": name, "alpha": alpha, "weight_decay": wd, "lr": args.lr,
            "batch_size": args.batch, "steps": args.steps, "train_faces": len(train_idx), "loss": "mse one-hot",
-           "augment": 0.0, "dropout": 0.0, "seed": args.seed, "epochs": args.steps * args.batch // len(train_idx)}
+           "augment": 0.0, "dropout": 0.0, "seed": args.seed, "epochs": args.steps * args.batch // len(train_idx),
+           "precision": "bf16" if args.bf16 else "fp32"}
+    kwargs = {"dropout": 0.0} if args.model == "cnn" else {"dropout": 0.0, "norm": False}
+    cfg.update({k: v for k, v in kwargs.items() if k != "dropout"})
     torch.manual_seed(args.seed)
-    model = build("cnn", dropout=0.0).cuda()
+    model = build(args.model, **kwargs).cuda()
     w0 = weight_measures(model)["weight_norm"]
     with torch.no_grad():
         for m in model.modules():
             if isinstance(m, (nn.Conv2d, nn.Linear)):
                 m.weight.mul_(alpha)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=wd)
+    fast = torch.compile(model) if args.compile else model
 
     x_train, y_train = data.batch(train_idx)
     x_val, y_val = data.batch(data.idx["val"])
     target = F.one_hot(y_train, 7).float()
     g = torch.Generator(device="cuda").manual_seed(args.seed)
-    state = {"config": cfg, "status": "running", "started": time.time(), "history": [],
+    first, history = 1, []
+    if checkpoint.exists():
+        c = torch.load(checkpoint, weights_only=False)
+        model.load_state_dict(c["model"])
+        opt.load_state_dict(c["opt"])
+        g.set_state(c["g"])
+        first, history = c["step"] + 1, c["history"]
+        print(f"{name}: continuing from step {c['step']}", flush=True)
+    state = {"config": cfg, "status": "running", "started": time.time(), "history": history,
              "params": sum(p.numel() for p in model.parameters())}
     save(state, record)
     when = log_steps(args.steps, args.every)
     t0 = time.perf_counter()
-    for step in range(1, args.steps + 1):
+    for step in range(first, args.steps + 1):
         b = torch.randint(len(train_idx), (args.batch,), device="cuda", generator=g)
-        loss = F.mse_loss(model(x_train[b]), target[b])
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=args.bf16):
+            out = fast(x_train[b])
+        loss = F.mse_loss(out.float(), target[b])
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()
@@ -130,6 +158,11 @@ def run(alpha, wd, data, train_idx):
         })
         t0 = time.perf_counter()
         save(state, record)
+        if step % 2500 == 0 or step == args.steps:
+            tmp = checkpoint.with_suffix(".tmp")
+            torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "g": g.get_state(), "step": step,
+                        "history": state["history"]}, tmp)
+            os.replace(tmp, checkpoint)
     state["status"], state["finished"] = "done", time.time()
     state["val"] = val
     save(state, record)
@@ -144,6 +177,6 @@ data = GPUData()
 train_idx = subset(data, args.n, args.seed)
 print(f"{len(train_idx)} training faces, per class {torch.bincount(data.label[train_idx], minlength=7).tolist()}", flush=True)
 grid = [(a, wd) for a in args.alphas for wd in args.wds]
-add_to_plan([{"model": "cnn", "stage": "grok", "iteration": f"a{a:g}_wd{wd:g}", "epochs": args.steps * args.batch // args.n} for a, wd in grid])
+add_to_plan([{"model": args.model, "stage": "grok", "iteration": f"a{a:g}_wd{wd:g}", "epochs": args.steps * args.batch // args.n} for a, wd in grid])
 for alpha, wd in grid:
     run(alpha, wd, data, train_idx)
