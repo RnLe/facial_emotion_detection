@@ -432,3 +432,46 @@ Before the sweep: PyTorch's int8 breaks DenseNet (85.4% to 60.7% on validation; 
 float recovers most of it (78.1%). PyTorch gives every input of a concatenation one shared
 scale, and DenseNet concatenates up to 18 feature groups of very different size, so the
 small ones lose their resolution. Both variants are kept.
+
+## 2026-10-02: compression, results without fine-tuning
+
+Baselines (fp32, CPU with 8 threads; the timings drift by up to 12% between the start and
+the end of a sweep, since other programs share the machine):
+
+| Model | Size | Val acc | GPU, 1 face | GPU, 256 | CPU, 1 face | CPU, 256 | CPU 1 thread, 1 face |
+|---|---|---|---|---|---|---|---|
+| VGG | 56.5 MB | 86.0 | 0.77 ms | 34 ms | 6.0 ms | 909 ms | 20.3 ms |
+| ResNet-18 | 52.3 MB | 85.6 | 1.20 ms | 53 ms | 6.9 ms | 1,377 ms | 26.0 ms |
+| DenseNet | 6.0 MB | 85.4 | 6.5 ms | 58 ms | 8.7 ms | 1,437 ms | 9.8 ms |
+
+The strongest setting of each method that loses at most 0.5 points of validation accuracy
+(fewer parameters / fewer MACs / CPU speedup for one face / GPU speedup for one face):
+
+| Method | VGG | ResNet-18 | DenseNet |
+|---|---|---|---|
+| Output-based low rank | 2.4x / 1.8x / 1.28x / 0.57x | 4.2x / 3.5x / 1.38x / 0.52x | 1.9x / 2.0x / 0.84x / 0.52x |
+| Tucker-2 | 1.2x / 1.2x / 1.07x / 0.58x | 2.3x / 2.5x / 1.26x / 0.54x | 1.1x / 1.2x / 0.85x / 0.65x |
+| Spatial split | 2.0x / 3.1x / 1.54x / 0.61x | 3.1x / 3.2x / 1.22x / 0.60x | 1.2x / 1.2x / 0.96x / 0.78x |
+| int8 (CPU only) | 4.0x smaller, 3.5x faster (256 faces: 2.6x), +0.2 | 4.0x smaller, 2.0x faster (2.7x), +0.3 | 3.1x smaller, but -24.7 (-7.2 with float concatenations) |
+
+- Every factorisation makes a single face slower on the GPU: the extra layers cost more
+  launches than the saved arithmetic. On the CPU the speedups stay well below the MAC
+  savings, and DenseNet gets slower. int8 is faster than any factorisation.
+- VGG's output-based low rank holds up to 99% of the output variance and then collapses
+  (98%: 80.7, 95%: 51.8). The cause is neural collapse: at 95% the last conv keeps 7
+  directions and the first dense layer 4, below the 6 that seven classes need. Leaving
+  these two layers and the classifier whole brings 95% back to 85.2, but they hold most
+  of VGG's parameters (9.6 M instead of 2.8 M). One threshold for all layers is the wrong
+  way to set ranks. ResNet loses only 0.2 points at 95% (4.2x), likely because its skip
+  connections carry the signal past the approximated convs.
+- The spatial split holds up far better than the channel factorisations from the
+  weights: the weights are close to full rank across channels, but much less so across
+  the two directions of the kernel. On VGG it removes the most MACs of all methods (3.1x).
+- Everything below 0.5 points still needs the repair fine-tuning that is next.
+
+Verdicts. H17 holds at 99% (VGG 2.4x, ResNet 1.8x, DenseNet 1.2x, no loss) and is wrong at
+95% in both directions: VGG collapses, ResNet loses nothing. H18 holds: at equal size
+Tucker-2 is always worse than output-based low rank (VGG 5.9 M: 82.0 against 86.0 at
+6.1 M). H19 is wrong: the spatial split saves 2 to 3x on VGG and ResNet without loss.
+H20 holds for VGG and ResNet (with a larger single-face speedup than predicted for VGG)
+and fails for DenseNet. H21 holds.
