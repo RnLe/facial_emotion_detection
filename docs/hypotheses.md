@@ -136,3 +136,24 @@ training faces by step 750 at 45.3% validation, and NC1 was already down to 0.03
   about 5 points, like the CNN's 1x start, not the 11 points of its 3x start. *Why:* in
   the CNN the big late rise came with the late fall of NC1, which here happened before
   memorising was complete, so the features are already sorted by class.
+
+## Guesses about compression
+
+Written on 2026-10-02, before any compressed model was evaluated. The three larger long-run
+models after their cooldown (VGG 14.8 M parameters, ResNet-18 13.7 M, DenseNet 1.5 M). Each
+method on its own, swept over its strength, scored on validation without fine-tuning.
+Measured so far: the weights are close to full rank (keeping 95% of their squared singular
+values saves 1.2 to 1.7x), while the layer outputs are low-dimensional (95% of the output
+variance fits into 4 to 5.5x fewer parameters for VGG and ResNet, 2x for DenseNet).
+
+- **H17, output-based low rank.** At 99% of the output variance VGG and ResNet lose less
+  than 1 point of validation accuracy with about 2x fewer parameters and MACs; at 95% (4 to
+  5.5x fewer parameters) they lose several points. DenseNet saves at most 1.3x at 99%.
+- **H18, Tucker-2 from the weights.** At the same number of parameters it loses more
+  accuracy than output-based low rank, because the weights are close to full rank.
+- **H19, spatial split.** Also from the weights alone: under 2x fewer parameters before
+  accuracy drops.
+- **H20, int8.** About 4x smaller with under 0.5 points lost for all three models. On the
+  CPU 1.5 to 3x faster for 256 faces, less for a single face.
+- **H21, speed.** Splitting layers does not make a single face faster on the GPU (more
+  layers to launch one after another); on the CPU the speedup stays below the MAC reduction.

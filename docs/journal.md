@@ -414,3 +414,21 @@ settled or was repeating. The checkpoint is kept, so the run can be continued.
 H16 is wrong in size: the late rise is 9 points, not 5, although NC1 was already low before
 it started. NC1 falling late is not needed for a late rise; it only came with the larger
 rise of the CNN's 3x start.
+
+## 2026-10-02: compression, design
+
+The three larger long-run models after their cooldown, each compression method on its own
+and without fine-tuning (`fer/compress.py`, `scripts/11_compress.py`). One knob for the
+three factorisations, tau: the share each layer keeps of its output variance (output-based
+low rank) or of its squared singular values (Tucker-2, spatial split), swept from 0.999 to
+0.8. A layer is only replaced when that saves parameters. The output statistics and the
+int8 calibration come from 4,096 training faces; scores are on validation. Timing: median
+over repeated runs, one face and 256 faces, GPU in fp32 and CPU with 8 threads, plus one
+face on one CPU thread. Other programs share the machine, so each baseline is timed again
+at the end of its sweep.
+
+Before the sweep: PyTorch's int8 breaks DenseNet (85.4% to 60.7% on validation; 62.7% with
+4,096 calibration faces) but not VGG (86.0% to 86.2%). Keeping only the concatenations in
+float recovers most of it (78.1%). PyTorch gives every input of a concatenation one shared
+scale, and DenseNet concatenates up to 18 feature groups of very different size, so the
+small ones lose their resolution. Both variants are kept.
