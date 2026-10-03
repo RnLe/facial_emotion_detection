@@ -1,7 +1,9 @@
 [project]
 name = "fer"
-version = "0.1.0"
-description = "Facial emotion recognition: seven architectures on one cleaned dataset, and how much each gains from tuning"
+version = "1.0.0"
+description = "Facial emotion recognition: seven architectures on one cleaned dataset, hyperparameter optimization, long training and grokking, and model compression"
+readme = "README.md"
+authors = [{ name = "Rene-Marcel Lehner" }]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "torch>=2.11",
