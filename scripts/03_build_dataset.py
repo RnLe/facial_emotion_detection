@@ -11,7 +11,7 @@ Rules, each chosen after looking at the sheets in results/inspect/:
   so no copy of a test image is left in training.
 - FER2013 faces are framed looser than the aligned RAF-DB faces. FER2013 is
   cropped to 90%, centred 2 px lower: the crop that best matches the two
-  average faces (results/data/framing.png).
+  average faces (results/inspect/framing.png).
 - Splits: FER2013 Training / PublicTest / PrivateTest are train / val / test.
   RAF-DB's train set gives 10% (stratified) to validation; its test set stays.
 

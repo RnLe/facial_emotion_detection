@@ -50,7 +50,7 @@ every model, and the test set touched once at the end.
 - Framing differs: RAF-DB faces are aligned and tightly cropped, FER2013 faces are looser
   and sit a little higher. Matching the two average faces (edge maps, correlation) over
   crop and shift gives the best match when FER2013 is cropped to 90% with its centre 2 px
-  lower (correlation 0.24 before, 0.60 after; `results/data/framing.png`).
+  lower (correlation 0.24 before, 0.60 after; `results/inspect/framing.png`).
 
 ## 2026-09-30: cleaning and unifying
 
