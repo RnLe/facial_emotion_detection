@@ -1,0 +1,4 @@
+# WebAssembly SIMD (128-bit lanes): every current browser runs it, and the conv and
+# linear loops vectorise with it.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

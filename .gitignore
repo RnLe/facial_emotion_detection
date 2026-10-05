@@ -16,3 +16,7 @@ dashboard/
 
 # scratchpad notes: raw material for the report
 notes/
+
+# the browser demo's Rust build output (the profile keeps the built module)
+web/fer-wasm/target/
+web/fer-wasm/pkg/
