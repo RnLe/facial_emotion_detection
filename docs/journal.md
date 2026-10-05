@@ -584,3 +584,265 @@ clearly better (its 8x network has 0.22 M parameters instead of 0.19 M, since th
 rate must be a whole number). H23 mostly holds: compression saves a training run but finds
 no small network that training from scratch misses. The planned runs of the study are
 complete.
+
+# Part two: beating the references
+
+## 2026-10-04: references and the plan
+
+The study tops out at 85% (ResNet-18), every model from scratch at 48 px grayscale. The
+best published RAF-DB models reach 92 to 94%. Part two asks how much of that gap our
+models can close, and with what. The order follows a brainstorm on finding a model's
+bottleneck: references first, then diagnosis (where do the remaining errors come from),
+conventional optimization, a closer look at the architectures, and only then new
+mechanisms. Two tracks keep the claims clean: open (public pretrained weights, any input
+size) and scratch (our data only, equal budgets).
+
+References with released weights (the two best CLIP prompt methods, MPA-FER 93.74% and
+LaCoVL-FER 93.61%, released none):
+
+| Model | RAF-DB | Weights | Parameters |
+|---|---|---|---|
+| FMAE (Ning et al. 2024) | 93.45 | RAF-DB checkpoint, Hugging Face, CC BY-NC | 304 M (ViT-L/16) |
+| POSTER++ (Mao et al. 2023) | 92.21 | RAF-DB checkpoint, Google Drive, MIT | 58 M (44 M trained, the landmark net is frozen) |
+| CLIP ViT-B/16 (Radford et al. 2021) | none | OpenAI, through open_clip | 86 M image tower |
+
+Protocol: selection on validation only, test scored once per phase. The RAF-DB references
+were trained on RAF-DB's full train set, which holds our RAF validation faces, so their
+validation scores on the RAF part are inflated and their fine-tuning runs a fixed number
+of epochs. Many RAF-DB papers report the best epoch on the test set; our numbers select
+on validation and are therefore conservative. Trained from scratch, the references would
+take 8 to 10 GPU hours each; that study waits for overnight runs.
+
+`data/processed/rafdb.npz` (`scripts/17_rafdb.py build`): all 15,339 RAF-DB faces at 48 px
+grayscale, the official train (11,050 after our validation share) and test sets (3,068),
+nothing removed, as in the papers. Our cleaned dataset kept 3,055 of the test faces.
+
+## 2026-10-04: phase 1, the references and the targets
+
+`scripts/16_references.py`, `scripts/17_rafdb.py`. Reproduction on the official RAF-DB test
+set with the released weights, then the same 3,068 faces in grayscale and at our 48 px:
+
+| Model | Paper | Native 100 px color | 100 px gray | 48 px gray |
+|---|---|---|---|---|
+| FMAE | 93.45 | 93.29 | 92.24 | 91.46 |
+| POSTER++ | 92.21 | 92.08 | 91.20 | 89.15 |
+
+Both reproduce within 0.2 points (H26 holds). Their outputs follow RAF-DB's label order
+(98 and 100% on training faces with that order, 50% without). Color is worth about one
+point to them, the step from 100 to 48 px another 1 to 2.
+
+On our test set (accuracy; macro-F1 for the whole set):
+
+| Model | Applied as released | FER2013 / RAF-DB part | Fine-tuned on ours | FER2013 / RAF-DB part | Macro-F1 |
+|---|---|---|---|---|---|
+| FMAE | 86.59 | 81.79 / 91.46 | **90.18** | 89.28 / 91.10 | 84.8 |
+| POSTER++ | 78.60 | 68.21 / 89.13 | 88.67 | 88.32 / 89.03 | 82.2 |
+| CLIP ViT-B/16 | 50.74 zero-shot, 83.18 linear probe | 85.51 / 80.82 (probe) | 87.79 | 88.48 / 87.10 | 81.3 |
+| Our ResNet-18 (part one) | | | 85.11 | 86.69 / 83.50 | 77.7 |
+
+Fine-tuning ran a fixed number of epochs (FMAE 4, POSTER++ 10, CLIP 5) with our
+augmentation, square-root class weights and label smoothing 0.1, last weights kept.
+
+- H27 is partly wrong. POSTER++ and CLIP fall below our 85% as released, but FMAE beats
+  our best model by 1.5 points without ever seeing our data, entirely on the RAF-DB part
+  (91.5 against 83.5); on the FER2013 part it loses 4.9 points. The FER2013 part is
+  hit hardest for all three, as guessed.
+- H28 holds for all three: FMAE 90.2, POSTER++ 88.7, CLIP 87.8. Fine-tuning lifts mainly
+  the FER2013 part (FMAE +7.5, POSTER++ +20.1); the RAF-DB part stays where it was.
+- Pretraining is worth 3 to 5 points here, but not any pretraining: part one's
+  ImageNet ResNet-18 at 96 px reached 84.4, below training from scratch. The three
+  references were pretrained on faces (FMAE, POSTER++'s IR-50) or on 400 million web
+  images (CLIP), and all run at 224 px with far more compute per face (FMAE 147 faces/s
+  against several thousand for ResNet-18 at 48 px).
+
+RAF-DB alone. Our combined-data winners score 83.7 (VGG), 83.6 (ResNet-18) and 83.4
+(DenseNet) on the full official test set. Trained on RAF-DB alone in our pipeline: VGG
+83.9, ResNet-18 83.5 (3 seeds each), DenseNet 83.4 (seed 0; seeds 1 and 2 still to run).
+H29 holds: 9.4 points below the reproduced FMAE. Adding the FER2013 faces neither helps
+nor hurts the RAF-DB part.
+
+The targets:
+
+| | Our test set (A) | RAF-DB official test (B) |
+|---|---|---|
+| Open track | 90.18 (FMAE fine-tuned) | 93.29 (FMAE, native input); 91.46 at 48 px gray |
+| Scratch track | 85.11 (ResNet-18, stage 1) | 83.9 (VGG, RAF-DB only) |
+
+The scratch-track targets are our own models for now; the references trained from
+scratch (study 3) wait for overnight runs.
+
+## 2026-10-04: phase 2, where the errors come from (first half)
+
+`scripts/18_diagnose.py`, `scripts/19_errors.py`, `scripts/20_probes.py`, on the three family
+winners (VGG and DenseNet from the shape stage, ResNet-18 from stage 1).
+
+No defect (H30 holds). With augmentation and every regulariser off, all three fit 256
+training faces to 100% (DenseNet after 36 epochs, ResNet-18 after 69, VGG after 168).
+
+Memorisation. Scored without augmentation, the trained winners get 96.5 (ResNet-18), 97.0
+(DenseNet) and 98.8% (VGG) of their training faces right, against 85 to 86 on validation,
+about the same gap on both sources. They fit what they see; the gap is generalisation.
+
+Shared errors (test set, H34 holds):
+
+| | VGG | ResNet-18 | DenseNet |
+|---|---|---|---|
+| One run (mean of 3 seeds) | 84.96 | 85.11 | 84.78 |
+| Its 3 seeds averaged | 86.33 | 86.66 | 86.46 |
+
+One run of each family averaged: 86.95; all nine runs: **87.76** (FER2013 part 88.7, RAF-DB
+part 86.8). At least one family is right on 92.0% of the faces, all three on 76.8%. The
+families agree on 87 to 89% of the faces, and their penultimate features are less alike
+than two seeds of one family (linear CKA 0.70 to 0.83 across families, 0.86 to 0.91 within).
+Averaging buys 2.7 points of the 15% error: a large part is variance between runs, not a
+shared limit.
+
+The annotators' view (FER2013 test part, 3,098 faces with 10 FER+ votes each):
+
+| Votes for the label | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|
+| Faces | 420 | 393 | 457 | 479 | 553 | 796 |
+| ResNet-18 correct | 61.8 | 70.7 | 86.2 | 91.2 | 96.3 | 98.7 |
+
+Two thirds of the FER2013 errors sit on faces with 5 or 6 votes. But measured against the
+annotators the model is not at the ceiling. The best possible agreement with one random
+annotator, E[max_c p_c], lies between 81.4 (one annotator against the majority of the
+others, which the best classifier can only beat) and 83.0 (the plug-in estimate, too high
+with ten votes); the bootstrap-corrected estimate is 81.9. ResNet-18 reaches 77.2, the
+nine-run ensemble 78.4. A panel of nine annotators beats our model by 4 points at
+predicting the tenth. The majorities of two random halves of the annotators agree on 87%
+of the faces. The model's uncertainty follows the annotators' only weakly (Spearman 0.28
+between the entropies). H33: the first half holds (98.7 and 96.3 at 10 and 9 votes, 61.8
+at 5, but 70.7 at 6); the second half is wrong, the model is 4 to 5 points below the
+ceiling, not within 3.
+
+Inside the networks (linear probes on 8,000 training faces, scored on validation). The
+expression becomes readable mostly between the second and third stage (ResNet-18: 52 after
+the stem, 57, 67, 81, 86 after the last stage; VGG and DenseNet alike); the last stage
+adds 5 points. The source is readable at 91 to 98% from the first stage on and stays in
+the features of ResNet-18 and DenseNet up to the classifier (95 and 97%); VGG's dense head
+removes some of it (78%). H37: the second half holds; the first half is wrong, the third
+stage already carries most of it.
+
+Occlusion (ResNet-18, recall change on validation when a region is replaced by the mean
+face): happy needs the mouth (-30), surprise mouth and eyes (-27, -21), fear eyes and
+brows (-28, -18), sad the eyes (-23) and hardly the mouth (-2), angry mouth, eyes and brows
+(-20, -14, -13). Disgust, the weakest class (recall 55%), is read from mouth and eyes (-22,
+-19) and hardly from the nose (-1), although the nose wrinkle is its defining action unit.
+
+Information (H36 is wrong). ResNet-18 on RAF-DB alone, seed 0, validation / test: 48 px
+gray 83.0 / 83.9; 100 px gray with a stride-2 stem (about the same compute) 83.3 / 84.8;
+100 px color with a stride-2 stem 83.5 / 82.8; with a stride-1 stem (4x compute) 82.3 / 82.7
+gray and 82.9 / 83.1 color. All within the spread between seeds. For a network trained from
+scratch neither resolution nor color is the bottleneck; the references themselves lose
+only 1.8 (FMAE) and 2.9 (POSTER++) points at 48 px gray. The gap to them is in what the
+network has learned, not in what the input holds.
+
+## 2026-10-04: phase 2, where the errors come from (second half)
+
+Sources (ResNet-18 winner, 3 seeds, the same number of optimiser steps for every
+training set, selected on the training source's validation share):
+
+| Trained on | FER2013 test part | RAF-DB test part |
+|---|---|---|
+| FER2013 only | 86.25 | 66.63 |
+| RAF-DB only | 67.42 | 84.32 |
+| Both (stage 1) | 86.69 | 83.50 |
+
+Across sources a model loses about 18 points. Pooling gains 0.4 on FER2013 and costs 0.8
+on RAF-DB (where the RAF-only model also saw each face three times as often). H31: the
+second half holds; the first half is wrong for the RAF-DB part. The two datasets are far
+apart, which fits the source staying readable in the features.
+
+Label errors (confident learning on 5-fold out-of-fold probabilities, 84.7% correct):
+2,574 training faces flagged, 7.6% (FER2013 6.8%, RAF-DB 9.3%), mostly neutral and sad
+(868 and 494 flags), on the neutral/sad, happy/neutral and fear/surprise boundaries. The 60
+most confident flags of each source, looked at by eye: on FER2013 mostly faces that sit
+between two expressions (a wide-eyed open mouth labelled surprise, read as fear), plus a
+few cartoons, drawings, and a screaming face labelled happy; on RAF-DB more faces whose
+label looks wrong (happy or neutral faces without a smile, read as disgust at 0.95 to 1.00
+confidence) and many blurred or half-covered faces. Training without the flagged faces
+(3 seeds): validation 85.48 against 85.98, macro-F1 78.1 against 78.9, test 84.95 against
+85.11. Removing them costs a little; they are hard faces, not useless ones. H35: the share
+is wrong (7.6, not 2 to 4%); the effect is at the edge of the guess (-0.5).
+
+RAF-DB alone, DenseNet seeds 1 and 2: 80.1 and 83.5 (seed 1 ends 3 points below the others,
+its validation score too; mean of 3 seeds 82.3).
+
+## 2026-10-04: phase 4 run early, controlled changes to the input
+
+`scripts/22_bottleneck.py perturb`, validation set, our three winners (seed 0) against FMAE
+fine-tuned on our data. Accuracy:
+
+| Input | VGG | ResNet-18 | DenseNet | FMAE |
+|---|---|---|---|---|
+| Intact | 85.9 | 86.0 | 85.2 | 91.5 |
+| Mirrored | 85.4 | 85.6 | 84.6 | 92.0 |
+| 2x2 tiles shuffled | 48.1 | 57.6 | 54.1 | 79.1 |
+| 3x3 tiles shuffled | 32.1 | 38.5 | 34.0 | 56.5 |
+| 4x4 tiles shuffled | 28.7 | 30.1 | 25.0 | 44.1 |
+| 6x6 tiles shuffled | 20.3 | 27.7 | 20.7 | 24.1 |
+| Blur, sigma 1 px | 80.1 | 80.5 | 79.2 | 87.6 |
+| Blur, sigma 2 px | 53.0 | 54.5 | 53.1 | 61.0 |
+| High-pass (minus sigma 2 blur) | 80.3 | 80.0 | 78.7 | 86.7 |
+
+Two differences stand out. Mirroring changes our models' prediction on 8 to 9% of the
+faces (disgust 17 to 22%, fear 14 to 19%), although every one of them trained with random
+flips; FMAE's changes on 2.9% (disgust 3.3%). And FMAE still reads 79% of the faces with
+their quadrants shuffled, ours 48 to 58%: it can tell the expression from a part on its
+own, ours need the parts where they belong. Averaging each face with its mirror image
+(flip test-time augmentation) gives the ResNet-18 winner +0.24 on validation and +0.71 on
+test (85.82; FER2013 part 87.49, RAF-DB part 84.12).
+
+## 2026-10-05: phase 3, known methods one at a time
+
+`scripts/21_optimize.py`, the ResNet-18 winner with one change, 3 seeds each, mean (seed
+spread of the test accuracy 0.1 to 0.6):
+
+| Change | Val | Val macro-F1 | Test | Test macro-F1 | FER2013 / RAF-DB part |
+|---|---|---|---|---|---|
+| None (stage 1) | 85.98 | 78.85 | 85.11 | 77.66 | 86.69 / 83.50 |
+| FER+ vote shares as targets | 85.16 | 78.04 | 84.64 | 77.34 | 84.97 / 84.31 |
+| Logit adjustment (tau 1, no class weights) | 84.41 | 75.89 | 82.60 | 73.68 | 85.28 / 79.88 |
+| EMA of the weights (0.999) | 85.95 | 79.37 | 85.38 | 77.77 | 87.35 / 83.38 |
+| SAM (rho 0.05) | 85.82 | 78.95 | 84.98 | 77.35 | 86.73 / 83.21 |
+| Without the flagged faces | 85.48 | 78.11 | 84.95 | | |
+| Flip test-time augmentation (no training) | 86.22 | 79.10 | 85.82 | | 87.49 / 84.12 |
+| Distilled from our nine-run ensemble (T 4) | 86.82 | 80.20 | 85.28 | 77.60 | 87.24 / 83.28 |
+| Distilled from FMAE fine-tuned (T 4), open track | **86.89** | **80.88** | **86.65** | **79.37** | **87.84 / 85.43** |
+
+- H38 is wrong as stated: against the majority labels the vote targets cost 1.7 points on
+  the FER2013 part (and gain 0.8 on RAF-DB). They teach the annotators' spread, not the
+  majority; whether they predict the annotators better is checked separately.
+- H39 roughly holds for FMAE: +1.5 on test, +1.9 on the RAF-DB part, at 48 px and the same
+  network. Distilling our own ensemble gains 0.8 on validation but only 0.2 on test.
+  The student saw FMAE's outputs on training faces only; FMAE never saw the official
+  RAF-DB test faces.
+- H40 is mostly wrong: EMA adds half a point of macro-F1 and nothing in accuracy, SAM
+  nothing at twice the cost; only the flip test-time augmentation adds 0.7 on test (0.24
+  on validation).
+- H41 is wrong: logit adjustment loses 1.6 points of accuracy and 3 of macro-F1. It moves
+  predictions to the rare classes, and their precision falls faster than their recall
+  rises.
+
+So with our own data only, the known methods give at most a few tenths of a point on
+test. Only outside knowledge (the FMAE teacher) moves the 48 px network noticeably, which
+fits phase 2: the gap is in the learned representation.
+
+## 2026-10-05: phase 2, the learning curve
+
+The ResNet-18 winner on 12.5, 25 and 50% of the training set (drawn per source and
+class, as many optimiser steps as the full runs), 3 seeds, validation error:
+
+| Training faces | 4,228 | 8,454 | 16,911 | 33,827 |
+|---|---|---|---|---|
+| Error | 19.7 | 17.6 | 15.9 | 14.0 |
+
+Each doubling still removes about 1.9 points. A power law err = a n^-b + c fits with
+b = 0.16 and a floor c that the data cannot pin down (95% interval 0 to 12.3%); it
+predicts 12.6% at twice the data. H32 holds: the curve has not flattened, more faces of
+the same kind would still help. Together with phases 1 and 3 this is the error budget:
+the remaining errors are not mainly a limit of the labels or the input format, but of
+what the network can learn from 34,000 faces. Outside knowledge (FMAE as teacher, or
+pretraining) is the lever that works, and part of the error is run-to-run variance (the
+nine-run ensemble gains 2.7 points).

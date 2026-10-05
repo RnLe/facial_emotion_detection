@@ -175,3 +175,95 @@ before the full grid, the int8 follow-ups and the networks trained from scratch.
   size and loses less than 0.5 points more.
 - **H25, DenseNet in int8.** A few epochs of quantisation-aware training bring DenseNet's
   int8 version to within 1 point of the float model, with the concatenations quantised.
+
+# Part two: beating the references
+
+The study so far trains every model from scratch on 48x48 grayscale faces; the best reach
+85% on our test set (ResNet-18: 86.7 on the FER2013 part, 83.5 on the RAF-DB part). The
+best published models reach 92 to 94% on RAF-DB, at 224 px in color and after pretraining
+on millions of faces. Part two measures that gap, finds where our models lose accuracy, and
+tries to close it. Two tracks, kept apart in every result:
+
+- **Open:** public pretrained weights, any input size, teachers allowed. Chases the number.
+- **Scratch:** our training data only, equal budgets. Judges new mechanisms.
+
+## Guesses about the references
+
+Written on 2026-10-04, before any reference model was run. References: FMAE (ViT-L
+pretrained as a masked autoencoder on 9 million faces, 93.45% on RAF-DB; Ning et al. 2024),
+POSTER++ (IR-50 face backbone with landmark cross-attention, 92.21%; Mao et al. 2023), and
+CLIP ViT-B/16 as a general foundation model (Radford et al. 2021), standing in for the CLIP
+prompt methods (MPA-FER 93.74%, Ma et al. 2025), which released no weights.
+
+- **H26, reproduction.** The released RAF-DB checkpoints of FMAE and POSTER++ reach their
+  published accuracy on the official RAF-DB test set within 0.5 points.
+- **H27, applied as they are.** On our test set (48 px grayscale, scaled up to 224 and
+  copied into three channels) all references score below our 85%: the input is out of
+  their distribution. The FER2013 part suffers most (other source, looser framing, labels
+  from FER+ votes).
+- **H28, fine-tuned.** A few epochs on our training set lift every reference above our
+  85%: FMAE to at least 88, POSTER++ to at least 87, CLIP to at least 86. Pretraining is
+  the largest single lever left.
+- **H29, our models on RAF-DB.** Our three winners (VGG, ResNet-18, DenseNet), trained on
+  RAF-DB alone in our pipeline (48 px grayscale), reach 83 to 86% on its official test set:
+  7 to 10 points below the references.
+
+## Guesses about where the errors come from
+
+Written on 2026-10-04, before any diagnosis run (the reference reproductions were known:
+both reach their published RAF-DB accuracy, and at 48 px grayscale they lose 2 to 3
+points). The subject is the ResNet-18 winner; VGG and DenseNet check agreement.
+
+- **H30, no defect.** Every winner fits 256 training faces to 100% once augmentation and
+  regularisation are off.
+- **H31, sources.** Training on both sources helps each test part (no negative transfer),
+  and a model trained on one source loses more than 10 points on the other.
+- **H32, more data.** The learning curve has not flattened: the fitted floor lies well
+  below today's error, so more data (or pretraining) still helps.
+- **H33, ambiguity.** On the FER2013 part errors cluster on faces the annotators disagreed
+  on: 95% or more correct at 9 or 10 of 10 votes, under 65% at 5 or 6. Against a random
+  single annotator the model's expected agreement is within 3 points of the best possible
+  (the vote-based ceiling, E[max_c p_c]).
+- **H34, shared errors.** An ensemble of the three families gains 1 to 1.5 points; at
+  least one of them is right on more than 92% of the test faces.
+- **H35, label errors.** Confident learning flags 2 to 4% of the training labels; dropping
+  them changes validation accuracy by less than half a point (the cleaning was strict).
+- **H36, information.** On RAF-DB alone, 100 px color beats 48 px grayscale by 2 to 4
+  points with the same network: our input format is part of the gap to the references.
+- **H37, representations.** Expression becomes linearly readable only in the last stage;
+  the source (FER2013 or RAF-DB) is readable from the features at over 90%.
+
+## Guesses about known methods
+
+Written on 2026-10-04, before any phase 3 run. Known by then: the fine-tuned references
+reach 87.8 to 90.2 on our test set; our winners memorise their training set (96 to 99%
+clean training accuracy against 85 to 86 on validation); an ensemble of our nine stage
+runs reaches 87.8; FER2013 errors sit mostly on faces with 5 or 6 of 10 votes. One change
+at a time on the ResNet-18 winner, 3 seeds, judged on validation.
+
+- **H38, vote targets.** Training on the FER+ vote shares instead of the majority label
+  adds 0.5 to 1 point on the FER2013 part and improves calibration.
+- **H39, distillation.** Distilling FMAE (fine-tuned on our data) into the 48 px ResNet-18
+  adds about 2 points; distilling our own nine-run ensemble adds about 1.
+- **H40, small tricks.** Flip test-time augmentation, an average of the weights (EMA) and
+  SAM each add 0.3 to 0.5 points; together less than the sum.
+- **H41, logit adjustment.** The logit-adjusted loss raises macro-F1 over square-root
+  class weights at about the same accuracy.
+
+## Guesses about new mechanisms: mirror invariance
+
+Written on 2026-10-05, before any run of the mirror network. The phenomenon: our winners
+change their prediction on 8 to 9% of the validation faces when a face is mirrored
+(disgust 17 to 22%, fear 14 to 19%), although they trained with random flips; FMAE on
+2.9%. Averaging each face with its mirror image at test time gains 0.7 points on test. The
+mechanism (`fer/models/mirror.py`): every filter shares its weights with its mirror
+image, so the network gives a face and its mirror image exactly the same scores; the head
+also sees how asymmetric each feature is (|a - b|), not just its mirror average. Same
+recipe as the ResNet-18 winner (its tuned settings, no tuning of its own), 3 seeds.
+
+- **H42, mirror invariance.** At ResNet-18's parameter count the mirror network beats the
+  winner by 0.5 to 1 point on validation, and at least matches the winner with flip
+  test-time augmentation. The gain is largest on disgust and fear. At ResNet-18's compute
+  (half the parameters) it matches the winner within 0.3 points. With a quarter of the
+  training data its gain is twice as large (a built-in symmetry is worth more when data
+  is scarce).

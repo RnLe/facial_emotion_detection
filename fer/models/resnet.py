@@ -25,24 +25,46 @@ class BasicBlock(nn.Module):
         return F.relu(out + self.skip(x))
 
 
+class SpatialReadout(nn.Module):
+    """k learned weightings of the final grid, each pooling the features with its own
+    weights: unlike global average pooling, where a feature appears counts (the faces are
+    aligned). Starts close to average pooling."""
+
+    def __init__(self, side, k=4):
+        super().__init__()
+        self.maps = nn.Parameter(0.1 * torch.randn(k, side * side))
+
+    def forward(self, x):
+        w = self.maps.softmax(-1)
+        return torch.einsum("bcn,kn->bkc", x.flatten(2), w).flatten(1)
+
+
 class ResNet18(nn.Module):
     """3x3 stem without max pooling (the CIFAR variant), so the 48x48 input is not shrunk
     right away. Stages at 48, 24, 12 and 6 pixels.
 
     For the second tuning stage: width scales the channels, depth is the number of blocks
-    per stage (2 is ResNet-18, 1 ResNet-10, 3 ResNet-26), stages the number of stages."""
+    per stage (2 is ResNet-18, 1 ResNet-10, 3 ResNet-26), stages the number of stages.
+    in_ch and stem_stride are for larger color input, readout for the position-aware heads
+    (part two)."""
 
-    def __init__(self, classes=7, dropout=0.0, width=1.0, depth=2, stages=4):
+    def __init__(self, classes=7, dropout=0.0, width=1.0, depth=2, stages=4, in_ch=1, stem_stride=1, readout="gap", size=48):
         super().__init__()
         widths = [channels(64 * 2**k * width) for k in range(stages)]
-        self.stem = nn.Sequential(nn.Conv2d(1, widths[0], 3, 1, 1, bias=False), nn.BatchNorm2d(widths[0]), nn.ReLU(inplace=True))
+        self.stem = nn.Sequential(nn.Conv2d(in_ch, widths[0], 3, stem_stride, 1, bias=False), nn.BatchNorm2d(widths[0]), nn.ReLU(inplace=True))
         stages, c = [], widths[0]
         for k, w in enumerate(widths):
             stride = 1 if k == 0 else 2
             stages.append(nn.Sequential(BasicBlock(c, w, stride), *[BasicBlock(w, w, 1) for _ in range(depth - 1)]))
             c = w
         self.stages = nn.Sequential(*stages)
-        self.head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Dropout(dropout), nn.Linear(c, classes))
+        side = size // stem_stride // 2 ** (len(widths) - 1)
+        if readout == "gap":
+            self.head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Dropout(dropout), nn.Linear(c, classes))
+        elif readout == "spatial":
+            self.head = nn.Sequential(SpatialReadout(side), nn.Dropout(dropout), nn.Linear(4 * c, classes))
+        else:  # "flatten": a weight for every position and channel
+            self.head = nn.Sequential(nn.Flatten(), nn.Dropout(dropout), nn.Linear(c * side * side, classes))
 
     def forward(self, x):
         return self.head(self.stages(self.stem(x)))

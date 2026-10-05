@@ -9,6 +9,7 @@ from fer.models import MODELS, build
 SIZES = {
     "cnn": (1.0, 1.5), "vgg": (6, 8), "resnet": (10.5, 11.5), "densenet": (0.7, 0.9),
     "vit": (3.5, 4.0), "convnext": (3.2, 3.8), "cct": (3.6, 4.2), "resnet_pretrained": (10.5, 11.5),
+    "mirror": (10.5, 11.5),
 }
 
 
@@ -34,3 +35,12 @@ def test_shapes(name):
             for s in stages:
                 model = build(name, width=w, depth=d, stages=s).eval()
                 assert model(torch.randn(2, 1, 48, 48)).shape == (2, 7), (w, d, s)
+
+
+@pytest.mark.parametrize("match", ["params", "compute"])
+def test_mirror_invariance(match):
+    """The mirror ResNet gives a face and its mirror image the same scores, exactly."""
+    model = build("mirror", match=match).eval()
+    x = torch.randn(4, 1, 48, 48)
+    with torch.no_grad():
+        assert torch.allclose(model(x), model(x.flip(-1)), atol=1e-4)

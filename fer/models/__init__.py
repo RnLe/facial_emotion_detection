@@ -1,6 +1,7 @@
 from .cnn import VGG, SimpleCNN
 from .convnext import ConvNeXt
 from .densenet import DenseNetBC
+from .mirror import MirrorResNet18
 from .resnet import PretrainedResNet18, ResNet18
 from .transformer import CCT, ViT
 
@@ -14,6 +15,7 @@ MODELS = {
     "convnext": ConvNeXt,
     "cct": CCT,
     "resnet_pretrained": PretrainedResNet18,
+    "mirror": MirrorResNet18,  # part two: mirror-invariant ResNet-18
 }
 
 NAMES = {
@@ -25,6 +27,7 @@ NAMES = {
     "convnext": "ConvNeXt",
     "cct": "Hybrid (CCT)",
     "resnet_pretrained": "ResNet-18, ImageNet",
+    "mirror": "Mirror ResNet-18",
 }
 
 

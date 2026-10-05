@@ -37,13 +37,14 @@ def load_fer2013():
     }
 
 
-def load_rafdb(size=None):
-    """RAF-DB basic set (aligned 100x100 RGB) as grayscale, optionally resized."""
+def load_rafdb(size=None, color=False):
+    """RAF-DB basic set (aligned 100x100 RGB) as grayscale (or RGB), optionally resized."""
     out = {"images": [], "label": [], "usage": [], "name": []}
     for usage in ["train", "test"]:
         labels = pd.read_csv(RAW / f"rafdb/{usage}_labels.csv")
         for name, label in zip(labels.image, labels.label):
-            img = cv2.imread(str(RAW / f"rafdb/DATASET/{usage}/{label}/{name}"), cv2.IMREAD_GRAYSCALE)
+            path = str(RAW / f"rafdb/DATASET/{usage}/{label}/{name}")
+            img = cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2RGB) if color else cv2.imread(path, cv2.IMREAD_GRAYSCALE)
             if size:
                 img = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
             out["images"].append(img)

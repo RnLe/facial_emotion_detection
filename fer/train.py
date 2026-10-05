@@ -23,13 +23,33 @@ torch.backends.cudnn.benchmark = True  # input size never changes: let cuDNN pic
 class GPUData:
     """All images as uint8 on the GPU, with index tensors per split."""
 
-    def __init__(self, path="data/processed/dataset.npz", device="cuda"):
-        d = np.load(path)
-        self.images = torch.tensor(d["images"], device=device)[:, None]
+    def __init__(self, path="data/processed/dataset.npz", device="cuda", arrays=None):
+        d = arrays if arrays is not None else np.load(path)
+        images = torch.tensor(d["images"], device=device)
+        # grayscale (N, H, W) or color (N, H, W, 3)
+        self.images = images.permute(0, 3, 1, 2).contiguous() if images.ndim == 4 else images[:, None]
         self.label = torch.tensor(d["label"], device=device)
         self.source = torch.tensor(d["source"], device=device)
         split = torch.tensor(d["split"], device=device)
         self.idx = {name: torch.where(split == k)[0] for k, name in enumerate(["train", "val", "test"])}
+        self.original_index = d["original_index"] if "original_index" in d else None
+        self._votes = None
+
+    def vote_targets(self):
+        """Per face a distribution over CLASSES: the FER+ vote shares for FER2013 faces
+        (contempt, unknown and not-a-face votes left out), one-hot for RAF-DB faces."""
+        if self._votes is None:
+            from .data import FERPLUS_EMOTIONS, FERPLUS_TO_CLASS, load_fer2013
+
+            votes = load_fer2013()["votes"]
+            t = np.eye(len(CLASSES), dtype=np.float32)[self.label.cpu().numpy()]
+            fer = (self.source == 0).cpu().numpy()
+            for name, c in (FERPLUS_TO_CLASS.items() if fer.any() else []):
+                t[fer, c] = votes[self.original_index[fer], FERPLUS_EMOTIONS.index(name)]
+            if fer.any():
+                t[fer] /= t[fer].sum(1, keepdims=True)
+            self._votes = torch.tensor(t, device=self.label.device)
+        return self._votes
 
     def batch(self, idx, strength=None, generator=None):
         """Images for idx, augmented if strength is given, normalised, ready for the model.
@@ -58,14 +78,40 @@ def param_groups(model, weight_decay):
 
 
 @torch.no_grad()
-def predict(model, data, split, batch_size=1024):
+def predict(model, data, split, batch_size=1024, tta=False):
+    """Class probabilities for one split; tta also averages over the mirrored faces."""
     model.eval()
     probs = []
     for k in range(0, len(data.idx[split]), batch_size):
         x, _ = data.batch(data.idx[split][k:k + batch_size])
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            probs.append(model(x).float().softmax(1))
+            p = model(x).float().softmax(1)
+            if tta:
+                p = (p + model(x.flip(-1)).float().softmax(1)) / 2
+        probs.append(p)
     return torch.cat(probs), data.label[data.idx[split]]
+
+
+def sam_step(model, loss_fn, opt, rho):
+    """Sharpness-aware minimisation (Foret et al. 2021): step from the worst point within
+    rho of the weights (first-order). loss_fn() runs the forward pass and returns
+    (loss, output)."""
+    loss, out = loss_fn()
+    opt.zero_grad(set_to_none=True)
+    loss.backward()
+    params = [p for p in model.parameters() if p.grad is not None]
+    with torch.no_grad():
+        norm = torch.norm(torch.stack([p.grad.norm() for p in params]))
+        eps = [p.grad * (rho / (norm + 1e-12)) for p in params]
+        for p, e in zip(params, eps):
+            p.add_(e)
+    opt.zero_grad(set_to_none=True)
+    loss_fn()[0].backward()
+    with torch.no_grad():
+        for p, e in zip(params, eps):
+            p.sub_(e)
+    opt.step()
+    return loss, out
 
 
 def save(record, path):
@@ -82,6 +128,11 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
     cfg keys: model, epochs, batch_size, lr, weight_decay, warmup_epochs, label_smoothing,
     augment, class_weights, seed, and the model's own settings (dropout, drop_path, and
     width, depth, stages for the shape stage).
+    Optional (part two): targets="votes" (FER+ vote shares as soft targets), logit_adjust
+    (tau of Menon et al. 2021: the loss sees logits + tau log prior), ema (decay of an
+    average of the weights, which is then validated and kept), sam (rho), tta (validate
+    and test with mirrored faces too), teacher (path of cached log-probabilities for every
+    face of the dataset) with kd_alpha and kd_temperature, keep_last.
     With an Optuna trial, the validation macro-F1 is reported each epoch for pruning.
     With a record path, the run's state is written there after every epoch (for following
     the training live).
@@ -91,7 +142,7 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
     save(state, record)
     torch.manual_seed(cfg["seed"])
     g = torch.Generator(device="cuda").manual_seed(cfg["seed"])
-    model_args = {k: cfg[k] for k in ("dropout", "drop_path", "width", "depth", "stages") if k in cfg}
+    model_args = {k: cfg[k] for k in ("dropout", "drop_path", "width", "depth", "stages", "in_ch", "stem_stride", "readout", "match") if k in cfg}
     model = build(cfg["model"], **model_args).cuda().to(memory_format=torch.channels_last)
     fast = torch.compile(model) if cfg.get("compile", compile) else model
 
@@ -104,6 +155,21 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
         opt, lambda s: (s + 1) / max(1, warmup) if s < warmup else 0.5 * (1 + math.cos(math.pi * (s - warmup) / max(1, total - warmup)))
     )
     weights = class_weights(data.label[train_idx], cfg["class_weights"])
+    targets = data.vote_targets() if cfg.get("targets") == "votes" else None
+    log_prior = None
+    if cfg.get("logit_adjust"):
+        counts = torch.bincount(data.label[train_idx], minlength=len(CLASSES)).float()
+        log_prior = cfg["logit_adjust"] * (counts / counts.sum()).log()
+    teacher = None
+    if cfg.get("teacher"):
+        teacher = torch.load(cfg["teacher"])["dataset"].float().cuda()
+        temp, alpha = cfg.get("kd_temperature", 2.0), cfg.get("kd_alpha", 0.5)
+    ema = None
+    if cfg.get("ema"):
+        from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
+
+        ema = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(cfg["ema"]), use_buffers=True)
+    tta = bool(cfg.get("tta"))
 
     history, best, best_state = [], -1.0, None
     for epoch in range(cfg["epochs"]):
@@ -115,17 +181,34 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
         correct = torch.zeros((), device="cuda")
         bs = cfg["batch_size"]
         for s in range(steps):
+            batch = perm[s * bs:(s + 1) * bs]
             x, y = xs[s * bs:(s + 1) * bs], ys[s * bs:(s + 1) * bs]
-            with torch.autocast("cuda", dtype=torch.bfloat16):
-                out = fast(x)
-                loss = F.cross_entropy(out.float(), y, weight=weights, label_smoothing=cfg["label_smoothing"])
-            opt.zero_grad(set_to_none=True)
-            loss.backward()
-            opt.step()
+            target = targets[batch] if targets is not None else y
+
+            def loss_fn():
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    out = fast(x).float()
+                logits = out + log_prior if log_prior is not None else out
+                loss = F.cross_entropy(logits, target, weight=weights, label_smoothing=cfg["label_smoothing"])
+                if teacher is not None:
+                    kd = F.kl_div(F.log_softmax(out / temp, 1), F.log_softmax(teacher[batch] / temp, 1), log_target=True, reduction="batchmean")
+                    loss = (1 - alpha) * loss + alpha * temp**2 * kd
+                return loss, out
+
+            if cfg.get("sam"):
+                loss, out = sam_step(model, loss_fn, opt, cfg["sam"])
+            else:
+                loss, out = loss_fn()
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                opt.step()
             sched.step()
+            if ema is not None:
+                ema.update_parameters(model)
             loss_sum += loss.detach()
             correct += (out.argmax(1) == y).sum()
-        prob, true = predict(fast, data, "val")
+        judged = ema.module if ema is not None else fast
+        prob, true = predict(judged, data, "val", tta=tta)
         val = scores(prob, true)
         row = {
             "epoch": epoch + 1,
@@ -142,7 +225,7 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
         save(state, record)
         if val["macro_f1"] > best:
             best = val["macro_f1"]
-            best_state = copy.deepcopy(model.state_dict())
+            best_state = copy.deepcopy((ema.module if ema is not None else model).state_dict())
         if log:
             log(f"{cfg['model']} ep {epoch + 1:3d}  loss {row['train_loss']:.3f}  train {row['train_accuracy']:.3f}  "
                 f"val {row['val_accuracy']:.3f} / F1 {row['val_macro_f1']:.3f}  {row['seconds']:.1f}s")
@@ -155,15 +238,20 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
                 save(state, record)
                 raise optuna.TrialPruned()
 
-    model.load_state_dict(best_state)
+    if cfg.get("keep_last"):  # keep_last: the final weights (for the overfitting check)
+        if ema is not None:
+            model.load_state_dict(ema.module.state_dict())
+    else:
+        model.load_state_dict(best_state)
     result = {"config": cfg, "history": history, "best_val_macro_f1": best}
-    result["val"] = scores(*predict(model, data, "val"))
+    result["val"] = scores(*predict(model, data, "val", tta=tta))
     if test:
-        prob, true = predict(model, data, "test")
+        prob, true = predict(model, data, "test", tta=tta)
         result["test"] = scores(prob, true)
         src = data.source[data.idx["test"]]
         for name, k in [("test_fer", 0), ("test_raf", 1)]:
-            result[name] = scores(prob[src == k], true[src == k])
+            if (src == k).any():
+                result[name] = scores(prob[src == k], true[src == k])
         result["test_pred"] = prob.argmax(1).tolist()  # for bootstrap intervals later
         if record:
             torch.save(model.state_dict(), Path(record).with_suffix(".pt"))
