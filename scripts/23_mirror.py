@@ -5,6 +5,8 @@ train: the winner's settings with the mirror network, at ResNet-18's parameter c
 quarter: both networks on a quarter of the training set (the same draw as the learning
     curves in scripts/18_diagnose.py, as many optimiser steps as the full runs), 3 seeds;
     the ResNet-18 runs are the learning-curve runs.
+combine: the mirror network distilled from FMAE fine-tuned on our data (open track) and
+    from the nine-run ensemble of our stage runs (scratch track), 3 seeds each (H44).
 summary: validation and test against the winner with and without flip test-time
     augmentation, recall per class.
 """
@@ -58,6 +60,18 @@ def quarter(seeds):
         print("quarter", seed, f"val {r['val']['accuracy']:.4f}  test {r['test']['accuracy']:.4f}")
 
 
+TEACHERS = {"distill_fmae": "runs/references/fmae/finetune_logprob.pt", "self_distill": "runs/opt/ensemble_logprob.pt"}
+
+
+def combine(seeds):
+    data = GPUData()
+    for name, teacher in TEACHERS.items():
+        for seed in seeds:
+            cfg = {**base_config(seed), "seed": seed, "match": "params", "teacher": teacher, "kd_alpha": 0.5, "kd_temperature": 4.0}
+            r = train_one(f"{name}_{seed}", cfg, data)
+            print(name, seed, f"val {r['val']['accuracy']:.4f}  test {r['test']['accuracy']:.4f}")
+
+
 def row(r):
     return {"val": r["val"]["accuracy"], "val_macro_f1": r["val"]["macro_f1"], "test": r["test"]["accuracy"],
             "test_macro_f1": r["test"]["macro_f1"], "test_fer": r["test_fer"]["accuracy"], "test_raf": r["test_raf"]["accuracy"],
@@ -77,6 +91,11 @@ def summary(seeds):
     }
     tta = json.loads(Path("results/optimize.json").read_text())["tta"]["tta"]
     out["resnet_tta"] = {k: v["mean"] for k, v in tta.items()}
+    for name in TEACHERS:
+        done = [f"{name}_{s}" for s in seeds if record_path("mirror", "mirror", f"{name}_{s}").exists()]
+        if done:
+            out[f"mirror_{name}"] = mean([row(load("mirror", "mirror", n)) for n in done])
+            out[name] = mean([row(load("opt", "resnet", f"{name}_{s}")) for s in seeds])
     q = [f"quarter_{s}" for s in seeds if record_path("mirror", "mirror", f"quarter_{s}").exists()]
     if q:
         out["quarter_mirror"] = mean([row(load("mirror", "mirror", n)) for n in q])
@@ -88,13 +107,15 @@ def summary(seeds):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("step", choices=["train", "quarter", "summary"])
+    ap.add_argument("step", choices=["train", "quarter", "combine", "summary"])
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     a = ap.parse_args()
     if a.step == "train":
         train(a.seeds)
     elif a.step == "quarter":
         quarter(a.seeds)
+    elif a.step == "combine":
+        combine(a.seeds)
     else:
         path = Path("results/mirror.json")
         path.write_text(json.dumps(summary(a.seeds), indent=1))

@@ -132,7 +132,8 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
     (tau of Menon et al. 2021: the loss sees logits + tau log prior), ema (decay of an
     average of the weights, which is then validated and kept), sam (rho), tta (validate
     and test with mirrored faces too), teacher (path of cached log-probabilities for every
-    face of the dataset) with kd_alpha and kd_temperature, keep_last.
+    face of the dataset) with kd_alpha and kd_temperature, keep_last, init (path of
+    pretrained weights for everything but the head).
     With an Optuna trial, the validation macro-F1 is reported each epoch for pruning.
     With a record path, the run's state is written there after every epoch (for following
     the training live).
@@ -144,6 +145,9 @@ def run(cfg, data=None, trial=None, test=False, compile=True, log=print, record=
     g = torch.Generator(device="cuda").manual_seed(cfg["seed"])
     model_args = {k: cfg[k] for k in ("dropout", "drop_path", "width", "depth", "stages", "in_ch", "stem_stride", "readout", "match") if k in cfg}
     model = build(cfg["model"], **model_args).cuda().to(memory_format=torch.channels_last)
+    if cfg.get("init"):  # pretrained encoder weights (part two); the head starts fresh
+        missing, unexpected = model.load_state_dict(torch.load(cfg["init"], map_location="cuda"), strict=False)
+        assert not unexpected and all(k.startswith("head.") for k in missing), (missing, unexpected)
     fast = torch.compile(model) if cfg.get("compile", compile) else model
 
     train_idx = data.idx["train"]

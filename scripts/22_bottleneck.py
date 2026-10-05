@@ -88,14 +88,32 @@ def predict_ours(model, x01):
     return torch.cat(out)
 
 
-def perturb():
+def load_record(stage, model, name):
+    cfg = json.loads(record_path(stage, model, name).read_text())["config"]
+    args = {k: cfg[k] for k in MODEL_ARGS + ("readout", "match") if k in cfg}
+    net = build(cfg["model"], **args).cuda().to(memory_format=torch.channels_last)
+    net.load_state_dict(torch.load(record_path(stage, model, name).with_suffix(".pt"), map_location="cuda"))
+    return net.eval()
+
+
+# later models, seed 0 of each (perturb_more)
+MORE = {"mirror_params": ("mirror", "mirror", "params_0"), "mirror_compute": ("mirror", "mirror", "compute_0"),
+        "masked": ("masked", "resnet", "finetune_0"), "distill_fmae": ("opt", "resnet", "distill_fmae_0"),
+        "self_distill": ("opt", "resnet", "self_distill_0")}
+
+
+def perturb(more=False):
     data = GPUData()
     idx = data.idx["val"]
     y = data.label[idx]
     x01 = data.images[idx].float().div(255)
-    models = {m: (lambda x, model=load_winner(m): predict_ours(model, x)) for m in WINNERS}
-    fm, spec = fmae_finetuned()
-    models["fmae_finetuned"] = lambda x: predict_reference(fm, spec, (x * 255).round().to(torch.uint8))
+    if more:
+        models = {k: (lambda x, model=load_record(*v): predict_ours(model, x)) for k, v in MORE.items()
+                  if record_path(*v).with_suffix(".pt").exists()}
+    else:
+        models = {m: (lambda x, model=load_winner(m): predict_ours(model, x)) for m in WINNERS}
+        fm, spec = fmae_finetuned()
+        models["fmae_finetuned"] = lambda x: predict_reference(fm, spec, (x * 255).round().to(torch.uint8))
     out = {}
     for name, f in models.items():
         g = torch.Generator(device="cuda").manual_seed(0)
@@ -168,7 +186,10 @@ def merge(key, value):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("step", choices=["perturb", "readout"])
+    ap.add_argument("step", choices=["perturb", "perturb_more", "readout"])
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     a = ap.parse_args()
-    merge(a.step, perturb() if a.step == "perturb" else readout(a.seeds))
+    if a.step == "readout":
+        merge(a.step, readout(a.seeds))
+    else:
+        merge(a.step, perturb(more=a.step == "perturb_more"))

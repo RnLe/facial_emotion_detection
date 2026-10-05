@@ -846,3 +846,159 @@ the remaining errors are not mainly a limit of the labels or the input format, b
 what the network can learn from 34,000 faces. Outside knowledge (FMAE as teacher, or
 pretraining) is the lever that works, and part of the error is run-to-run variance (the
 nine-run ensemble gains 2.7 points).
+
+## 2026-10-05: phase 4, the readout, and phase 3 seen by the annotators
+
+Readout (`scripts/22_bottleneck.py readout`, ResNet-18 winner, 3 seeds): global average
+pooling 85.98 validation / 85.11 test; four learned weightings of the 6x6 grid ("spatial")
+85.91 / 85.50; a weight per position ("flatten") 85.83 / 85.23. Shifting the validation
+faces by up to 4 px costs none of them anything (the augmentation already shifts by up to
+5 px). How the head pools does not matter; whatever ties our networks to the arrangement
+of the face (the tile-shuffle test) sits in the convolutional features, not in the head.
+
+Phase 3 judged by the annotators instead of the majority label (FER2013 test faces, mean
+of 3 seeds; ECE against the majority label):
+
+| | Agreement with one random annotator | Cross-entropy against the vote shares | ECE |
+|---|---|---|---|
+| Stage 1 | 76.9 | 0.872 | 0.051 |
+| Vote targets | 76.1 | **0.749** | 0.152 |
+| Logit adjustment | 76.0 | 1.024 | 0.136 |
+| EMA | 77.4 | 0.855 | 0.053 |
+| SAM | 77.1 | 0.864 | 0.050 |
+| Without flagged faces | 77.2 | 0.945 | 0.044 |
+| Distilled from our ensemble | 77.4 | 0.840 | **0.039** |
+| Distilled from FMAE | **77.7** | 0.799 | 0.090 |
+
+The vote targets do what they were built for: they predict the annotators' spread best
+(14% lower cross-entropy), but their single best guess agrees with an annotator less
+often, and against the majority label they look badly calibrated because they spread
+their confidence. Distilling our ensemble gives the best calibration. No method gets near
+the annotators' ceiling (81.4 to 83.0).
+
+## 2026-10-05: phase 5, the mirror-invariant network
+
+`fer/models/mirror.py`, `scripts/23_mirror.py`. Every filter shares its weights with its
+mirror image, batch norm shares its statistics within a pair, downsampling pools before
+the conv (a stride-2 3x3 conv would break the symmetry), and the head sees a + b and
+|a - b| of every feature pair. A face and its mirror image get the same scores to float
+precision (tested). The winner's settings, no tuning of its own, 3 seeds:
+
+| | Parameters | Val | Test | Test macro-F1 | FER2013 / RAF-DB part |
+|---|---|---|---|---|---|
+| ResNet-18 winner | 11.2 M | 85.98 | 85.11 | 77.66 | 86.69 / 83.50 |
+| Winner with flip test-time augmentation | 11.2 M | 86.22 | 85.82 | 78.10 | 87.49 / 84.12 |
+| Mirror network, same parameters | 11.2 M | **86.88** | **86.25** | 78.68 | 87.53 / 84.95 |
+| Mirror network, same compute | 5.6 M | 86.62 | 85.80 | 78.74 | 87.12 / 84.46 |
+| ResNet-18, a quarter of the data | 11.2 M | 82.37 | 81.03 | 70.46 | 84.00 / 78.01 |
+| Mirror network, a quarter of the data | 11.2 M | 83.37 | 82.30 | 72.03 | 84.11 / 80.46 |
+
+Validation recall per class (winner / mirror, same parameters): angry 84.7 / 84.5, disgust
+57.1 / 54.6, fear 70.5 / 63.2, happy 92.7 / 94.3, neutral 84.0 / 85.5, sad 78.3 / 78.3,
+surprise 90.4 / 91.2.
+
+H42 is half right. The accuracy holds: +0.9 on validation and +1.1 on test, more than
+averaging the winner over mirror images (+0.24, +0.7), and at the same compute with half
+the parameters it still gains 0.6 and 0.7. But the gain is not where the guess put it.
+Fear and disgust, whose predictions flipped most often, lose recall; the frequent classes
+(happy, neutral, surprise) gain. And with a quarter of the data the gain is about the
+same (+1.0), not twice as large. The built-in symmetry makes the network better overall,
+not by repairing the classes that mirroring confused, and its macro-F1 gain (+1.0 on test)
+is smaller than its accuracy gain suggests on the rare classes.
+
+## 2026-10-05: phase 5, combining
+
+The mirror network (same parameters as ResNet-18) with distillation, the winner's
+settings, 3 seeds (`scripts/23_mirror.py combine`):
+
+| | Val | Test | Test macro-F1 | FER2013 / RAF-DB part |
+|---|---|---|---|---|
+| Mirror network | 86.88 | 86.25 | 78.68 | 87.53 / 84.95 |
+| ResNet-18 + FMAE as teacher | 86.89 | 86.65 | 79.37 | 87.84 / 85.43 |
+| **Mirror network + FMAE as teacher** (open track) | **88.25** | **87.78** | **81.17** | **88.50 / 87.05** |
+| ResNet-18 + our ensemble as teacher | 86.82 | 85.28 | 77.60 | 87.24 / 83.28 |
+| Mirror network + our ensemble as teacher (scratch track) | 87.10 | 85.95 | 79.02 | 87.82 / 84.06 |
+
+The two gains add up almost exactly in the open track: mirror +1.14, FMAE teacher +1.54,
+both +2.67 over the winner. A 48 px network with ResNet-18's parameter count, trained on
+our data with FMAE's outputs on the training faces, reaches 87.8 on test: as good as the
+nine-run ensemble of part one's winners (87.76), 2.4 points short of FMAE itself (90.18),
+at a small fraction of its compute. H44 holds for the open track (87.8, guessed about
+87) and misses slightly for the scratch track (86.0, guessed 86.3).
+
+Self-distillation from our own ensemble lifts validation (+0.8 for ResNet-18, +0.2 for the
+mirror network) but not test (+0.2, -0.3). A likely reason, found after the fact: the
+ensemble members' checkpoints were chosen on the validation set, so a student that
+imitates them inherits their fit to it, and its validation score is optimistic. The FMAE
+teacher ran a fixed number of epochs without selection, and its validation and test
+gains agree. So validation is not a clean signal for self-distilled students; the
+scratch-track winner is the plain mirror network (86.25 on test), with the
+self-distilled one (87.10 validation, 85.95 test) reported next to it.
+
+## 2026-10-05: phase 5, masked-face pretraining on our own faces
+
+`fer/pretrain.py`, `scripts/24_masked.py`. The ResNet-18 winner's network first learns to
+reconstruct 60% masked 8x8 patches of our training faces (150 epochs, no labels; the
+error on masked patches falls from 0.97 to 0.42 of the patch variance), then trains on
+the labels with the winner's recipe, 3 seeds: validation 86.56 (+0.58), macro-F1 79.59
+(+0.74), test 85.59 (+0.48). (The first fine-tuning attempt died in torch's compile worker
+pool, not in our code; it was rerun with single-threaded compilation.)
+
+The controlled input changes on seed 0 of every new model (validation):
+
+| | Intact | Prediction changed when mirrored | 2x2 tiles shuffled | 3x3 tiles shuffled | Blur sigma 2 px |
+|---|---|---|---|---|---|
+| ResNet-18 winner | 86.0 | 8.0% | 57.6 | 38.5 | 54.5 |
+| Masked pretraining | 86.5 | 8.2% | 60.8 | 36.8 | 55.3 |
+| Mirror network (same parameters) | 86.5 | 0.0% | 58.2 | 34.6 | 59.1 |
+| Mirror network (same compute) | 86.6 | 0.02% | 58.3 | 35.3 | 55.6 |
+| ResNet-18 + FMAE as teacher | 86.5 | 6.2% | 59.1 | 37.1 | 56.2 |
+| ResNet-18 + our ensemble as teacher | 86.6 | 6.0% | 58.2 | 35.5 | 56.4 |
+| FMAE fine-tuned | 91.5 | 2.9% | 79.1 | 56.5 | 61.0 |
+
+H43: the masking objective on our 34,000 faces does not give FMAE's part reading (+3
+points with shuffled quadrants, where the objective explanation predicted 10 or more and
+FMAE is 21 above our winner); it gives half a point of accuracy. So scale, not the
+objective alone, is the likelier source; the test cannot separate scale from FMAE's
+architecture (a ViT on patch tokens). The student distilled from FMAE learns its outputs
+on intact faces but not its part reading. The mirror network's invariance holds on real
+faces (no prediction changes), and it is also the most robust to blur.
+
+## 2026-10-05: phase 6, the candidates against the targets
+
+`scripts/25_final.py`, `results/final_part2.json`. Test accuracy averaged over 3 seeds;
+the gain over the ResNet-18 winner with a paired bootstrap 95% interval (the same
+resampled test faces for both); the official RAF-DB test set at 48 px grayscale; size,
+compute (multiply-accumulates per face) and speed (256 faces on the GPU in fp32, one face
+on one CPU thread).
+
+| Model | Track | Test | Gain (95% CI) | Macro-F1 | RAF-DB official, 48 px | Parameters | GMACs | GPU, 256 faces | CPU, 1 face |
+|---|---|---|---|---|---|---|---|---|---|
+| ResNet-18 winner | scratch | 85.11 | | 77.7 | 83.6 | 11.2 M | 1.25 | 43 ms | 20 ms |
+| Masked pretraining | scratch | 85.58 | +0.5 (+0.0, +0.9) | 77.2 | 83.9 | 11.2 M | 1.25 | 43 ms | 21 ms |
+| Mirror network, same compute | scratch | 85.80 | +0.7 (+0.2, +1.2) | 78.7 | 84.5 | 5.6 M | 1.25 | 51 ms | 30 ms |
+| **Mirror network** | scratch | **86.25** | +1.1 (+0.7, +1.6) | 78.7 | **85.0** | 11.2 M | 2.47 | 84 ms | 62 ms |
+| Mirror network + our ensemble as teacher | scratch | 85.95 | +0.9 (+0.3, +1.3) | 79.0 | 84.1 | 11.2 M | 2.47 | 84 ms | 63 ms |
+| ResNet-18 + FMAE as teacher | open | 86.65 | +1.5 (+1.1, +2.0) | 79.4 | 85.5 | 11.2 M | 1.25 | 44 ms | 21 ms |
+| **Mirror network + FMAE as teacher** | open | **87.78** | +2.7 (+2.1, +3.2) | **81.2** | **87.1** | 11.2 M | 2.47 | 84 ms | 64 ms |
+| FMAE fine-tuned (the open target) | open | 90.18 | | 84.8 | 91.1 | 303 M | 61.6 | 665 ms (bf16) | |
+
+The mirror network at the same compute is slower than ResNet-18 in practice (1.2x on the
+GPU, 1.5x on one CPU thread) because it builds its mirrored filters on every call; for
+deployment they would be built once, leaving a plain conv network of ResNet-18's cost.
+
+Against the targets:
+
+| | Target | Best of part two | Reached |
+|---|---|---|---|
+| A, scratch (our test set) | 85.11 (ResNet-18 winner) | 86.25 (mirror network) | yes, +1.1 (+0.7, +1.6) |
+| A, open (our test set) | 90.18 (FMAE fine-tuned) | 87.78 (mirror network + FMAE as teacher) | no, 2.4 short, at 1/25 of the compute and 1/27 of the parameters |
+| B, scratch (RAF-DB official) | 83.9 (VGG on RAF-DB alone) | 85.0 (mirror network) | yes, though trained on the combined data |
+| B, open (RAF-DB official) | 93.29 native, 91.46 at 48 px (FMAE) | 87.1 at 48 px | no, 4.4 short at the same input |
+
+So far: from our own data, a built-in mirror symmetry is the one change that clearly
+helps (+1.1 on test, interval clear of zero), more than every known method of phase 3;
+with FMAE as teacher, the mirror network closes half of the distance to FMAE at 48 px.
+The open target stays out of reach for a network of ResNet-18's size trained on 34,000
+faces: what FMAE has (part reading, a representation learned from 9 million faces) did
+not come from our objective, our input, or our head.

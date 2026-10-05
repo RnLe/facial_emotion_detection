@@ -267,3 +267,29 @@ recipe as the ResNet-18 winner (its tuned settings, no tuning of its own), 3 see
   (half the parameters) it matches the winner within 0.3 points. With a quarter of the
   training data its gain is twice as large (a built-in symmetry is worth more when data
   is scarce).
+
+## Guesses about new mechanisms: masked-face pretraining on our own faces
+
+Written on 2026-10-05, before any run. The phenomenon: FMAE still reads 79% of the
+validation faces with their quadrants shuffled, our winners 48 to 58%; FMAE was pretrained
+to fill in masked parts of 9 million faces. Is it the objective or the scale? The test
+keeps the data and changes the objective: the ResNet-18 winner is first trained to
+reconstruct masked patches of our own training faces (no labels, no outside data), then
+trained on the labels with its usual recipe. Scratch track.
+
+- **H43, objective or scale.** If the masking objective is what matters, the pretrained
+  network reads parts: with shuffled quadrants it gains 10 points or more over the winner,
+  and it gains 0.5 to 1 point on validation. If scale is what matters, both stay close to
+  the winner. Guess: part reading improves clearly, accuracy little (0 to 0.5).
+
+## Guesses about combining
+
+Written on 2026-10-05, before any combined run. Known by then: the mirror network
+(ResNet-18's parameter count) gains 0.9 on validation and 1.1 on test over the winner;
+distillation from FMAE gains 0.9 and 1.5; distillation from our nine-run ensemble 0.8 and
+0.2. Both combinations train the mirror network (match=params) with the winner's settings,
+3 seeds.
+
+- **H44, combining.** Mirror network plus FMAE as teacher (open track) reaches about 87%
+  on test: the two gains add up partly, since both make the network more consistent.
+  Mirror network plus our own ensemble as teacher (scratch track) reaches about 86.3.
