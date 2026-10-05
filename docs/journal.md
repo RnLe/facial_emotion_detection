@@ -1002,3 +1002,36 @@ with FMAE as teacher, the mirror network closes half of the distance to FMAE at 
 The open target stays out of reach for a network of ResNet-18's size trained on 34,000
 faces: what FMAE has (part reading, a representation learned from 9 million faces) did
 not come from our objective, our input, or our head.
+
+## 2026-10-05: part two parked, and how to pick it up again
+
+Part two stops here for now. Done: phases 1 to 6, hypotheses H26 to H44 with their
+verdicts, results in `results/references.json` to `results/final_part2.json`. Open, in
+the order I would take them:
+
+1. **The references trained from scratch** (study 3 of phase 1): FMAE's ViT-L, POSTER++
+   and CLIP's ViT-B/16 on our training set only, 8 to 10 GPU hours each, overnight.
+2. **The mirror network in its deployed form**: mirrored filters built once instead of on
+   every call, so it runs at ResNet-18's speed; then its int8 and Tucker-2 versions, as in
+   the compression part.
+3. **More mechanisms from the phase 5 list** (face-coordinate readout, part tokens with
+   pairwise interaction, a learned template with a deformation field, annotator-aware
+   output, iterative refinement), each against a parameter- and compute-matched baseline.
+4. **Guided evolution** over a block grammar that contains the mirror operators, with
+   short proxy runs and successive halving, overnight.
+5. **The write-up**: part two in the README, and in the report when it is picked up again.
+
+How the runs work, to start again: every part-two script takes its step as the first
+argument (`uv run python scripts/23_mirror.py train`, the steps are listed in each
+script's docstring), writes its runs under `runs/` and its summary under `results/`, and
+skips runs whose record already says done, so a stopped step resumes where it was. One
+GPU job at a time: the desktop shares the GPU, and two jobs at once made the training
+stutter. Set `TORCHINDUCTOR_COMPILE_THREADS=1`; a crashed compile worker once killed a
+long run. The reference weights (about 3 GB) are fetched by `scripts/16_references.py`
+into the ignored `runs/references/weights/`.
+
+The browser demo on the portfolio comes from `scripts/26_web.py` (steps `models`,
+`samples`, `thumb`, `site`) and the Rust interpreter in `web/fer-wasm`, which reads the
+exported model files (`cargo test --release` checks it against the numpy reference;
+`RUSTFLAGS="-C target-feature=+simd128" wasm-pack build --target web --release` builds
+it). The seven winners there are the main study's, not part two's.
